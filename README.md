@@ -28,6 +28,12 @@ Supported variables:
 - `GOOGLE_SAFE_BROWSING_API_KEY`
 - `VT_API_KEY`
 
+Where each key is used:
+
+- `IPQS_API_KEY`: sender email reputation (`ipqs_email_client.py`) and URL reputation (`url_scanner.py`)
+- `GOOGLE_SAFE_BROWSING_API_KEY`: URL fallback reputation lookup (`url_scanner.py`)
+- `VT_API_KEY`: sender domain reputation (`sender_scanner.py`)
+
 Behavior when keys are missing:
 
 - Local scanner logic still runs and returns a score/verdict.
@@ -87,6 +93,36 @@ It is part of the technical documentation and complements the flow above.
 - Explainable output split into `riskIndicators` vs `infoFindings`.
 - Structured `scoreBreakdown` and summary objects (`urlSummary`, `attachmentSummary`, etc.).
 - Safe external API fallback behavior when remote providers are unavailable.
+
+---
+
+## Project Structure (Submission View)
+
+```text
+phishwall_public_clean/
+├── README.md
+├── .gitignore
+├── .env.example
+├── img.png
+├── run_dev.ps1
+├── run_dev.bat
+├── gmail-addon/
+│   ├── Main.js
+│   ├── EmailService.js
+│   ├── ApiService.js
+│   ├── UiService.js
+│   ├── Config.js
+│   └── appsscript.json
+└── phishwall_backend/
+    ├── main.py
+    ├── models.py
+    ├── requirements.txt
+    ├── .env.example
+    ├── data/risk_keywords.txt
+    ├── scanners/
+    ├── services/
+    └── tests/
+```
 
 ---
 
@@ -264,6 +300,11 @@ Run:
 cd phishwall_backend
 python -m unittest discover -s tests -v
 ```
+
+Current public version status:
+
+- Backend/API tests pass with and without live API keys (fallback path is active when keys are missing).
+- Public repository intentionally contains no real runtime secrets.
 
 ---
 
