@@ -39,16 +39,10 @@ Behavior when keys are missing:
 - Run ngrok on port `8000`.
 - Set `API_URL` in `gmail-addon/Config.js` to your public `/scan` URL.
 
-### 4) Apps Script sync
+### 4) Apps Script sync (optional for reviewers)
 
-From repository root:
-
-```bash
-clasp push
-clasp pull
-```
-
-This repo is connected through `.clasp.json` with `rootDir: "gmail-addon"`.
+This public submission keeps the `gmail-addon` source files.
+Local Apps Script linkage files (such as `.clasp.json`) are intentionally excluded from the public repo for safer publication.
 
 ---
 
@@ -300,7 +294,6 @@ Keep in submission:
 - `gmail-addon/*`
 - `phishwall_backend/*` (excluding secrets/caches)
 - `.gitignore`
-- `.clasp.json`
 - run scripts
 
 Do not submit:
