@@ -1,0 +1,86 @@
+# Format: category|weight|keyword
+# Categories can be: urgency, payment, credential, threat, generic
+
+urgency|4|urgent
+urgency|4|immediately
+urgency|4|action required
+urgency|4|security alert
+urgency|4|limited time
+urgency|4|asap
+urgency|4|urgent action
+urgency|4|act now
+urgency|4|time sensitive
+urgency|4|response needed
+urgency|4|דחוף
+urgency|4|באופן מיידי
+urgency|4|נדרש טיפול מיידי
+urgency|4|זמן מוגבל
+urgency|4|נדרשת פעולה מיידית
+urgency|4|נדרש מענה מיידי
+
+payment|5|payment
+payment|5|invoice overdue
+payment|5|bank transfer
+payment|5|wire transfer
+payment|5|pay now
+payment|5|invoice attached
+payment|5|outstanding balance
+payment|5|remittance
+payment|5|תשלום
+payment|5|חשבונית
+payment|5|חוב
+payment|5|העברה בנקאית
+payment|5|שלם עכשיו
+payment|5|חשבונית מצורפת
+payment|5|יתרה לתשלום
+
+credential|6|verify your account
+credential|6|verify account
+credential|6|verify
+credential|6|confirm your identity
+credential|6|password
+credential|6|login
+credential|6|2fa
+credential|6|one time code
+credential|6|sign in
+credential|6|reset password
+credential|6|account verification
+credential|6|security code
+credential|6|אימות חשבון
+credential|6|אמת את החשבון
+credential|6|אימות זהות
+credential|6|סיסמה
+credential|6|התחברות
+credential|6|קוד חד פעמי
+credential|6|אפס סיסמה
+credential|6|קוד אימות
+
+threat|7|account suspended
+threat|7|account will be blocked
+threat|7|final warning
+threat|7|legal action
+threat|7|your access will be revoked
+threat|7|account locked
+threat|7|unusual activity detected
+threat|7|unauthorized access
+threat|7|החשבון ייחסם
+threat|7|החשבון הושעה
+threat|7|אזהרה אחרונה
+threat|7|פעולה משפטית
+threat|7|הגישה תיחסם
+threat|7|החשבון ננעל
+threat|7|זוהתה פעילות חריגה
+
+generic|3|click here
+generic|3|open attachment
+generic|3|confirm
+generic|3|update your details
+generic|3|download now
+generic|3|view document
+generic|3|secure message
+generic|3|לחץ כאן
+generic|3|פתח קובץ מצורף
+generic|3|אשר
+generic|3|עדכן פרטים
+generic|3|צפה במסמך
+generic|3|הורד עכשיו

@@ -1,0 +1,30 @@
+{
+  "timeZone": "Asia/Jerusalem",
+  "exceptionLogging": "STACKDRIVER",
+  "runtimeVersion": "V8",
+  "oauthScopes": [
+    "https://www.googleapis.com/auth/gmail.addons.execute",
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/script.external_request"
+  ],
+  "addOns": {
+    "common": {
+      "name": "PhishWall",
+      "logoUrl": "https://drive.google.com/uc?export=view&id=1B0pLLT7MDD8mK_n7crhnHrV3pLD0JuKz",
+      "layoutProperties": {
+        "primaryColor": "#B167F4"
+      }
+    },
+    "gmail": {
+      "homepageTrigger": {
+        "runFunction": "buildHomePage"
+      },
+      "contextualTriggers": [
+        {
+          "unconditional": {},
+          "onTriggerFunction": "buildEmailCard"
+        }
+      ]
+    }
+  }
+}
