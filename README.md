@@ -133,7 +133,6 @@ The deep-dive files live under **[`docs/`](docs/)**; each owns exactly one topic
 | **[`docs/latency-and-resilience.md`](docs/latency-and-resilience.md)** | Parallel phases, timeouts, fallbacks, validation tests. |
 | **[`docs/gmail-addon.md`](docs/gmail-addon.md)** | Client-side flow, file-by-file, `API_URL`. |
 | **[`docs/design.md`](docs/design.md)** | Threat focus, design trade-offs, limitations. |
-| **[`docs/submission-checklist.md`](docs/submission-checklist.md)** | What ships, what does not, smoke tests. |
 
 
 ---

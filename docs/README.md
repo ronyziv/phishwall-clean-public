@@ -10,4 +10,3 @@
 - [`latency-and-resilience.md`](latency-and-resilience.md)
 - [`gmail-addon.md`](gmail-addon.md)
 - [`design.md`](design.md)
-- [`submission-checklist.md`](submission-checklist.md)
