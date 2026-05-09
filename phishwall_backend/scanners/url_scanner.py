@@ -1,9 +1,12 @@
 import ipaddress
 import json
+import logging
 import os
 import socket
+from concurrent.futures import ThreadPoolExecutor
 from urllib import parse, request
 
+from scanners.external_http_config import GSB_TIMEOUT, IPQS_URL_TIMEOUT, SCANNER_MAX_WORKERS
 from scanners.lookalike_domain_scanner import analyze_lookalike_domain
 
 
@@ -17,7 +20,6 @@ SHORTENERS = {
     "tiny.cc", "rb.gy", "shorturl.at", "t.ly", "buff.ly", "lnkd.in"
 }
 
-REQUEST_TIMEOUT_SECONDS = 3
 REMOTE_LOOKUP_LIMIT = 5
 SUSPICIOUS_URL_TERMS = ("download", "install", "update", "setup", "patch", "enable")
 SUSPICIOUS_DOWNLOAD_EXTENSIONS = (
@@ -74,7 +76,7 @@ def _ipqs_lookup(url):
     )
 
     try:
-        with request.urlopen(endpoint, timeout=REQUEST_TIMEOUT_SECONDS) as resp:
+        with request.urlopen(endpoint, timeout=IPQS_URL_TIMEOUT) as resp:
             data = _read_json_response(resp)
             if not isinstance(data, dict):
                 return None, "empty"
@@ -115,7 +117,7 @@ def _gsb_lookup(url):
     )
 
     try:
-        with request.urlopen(req, timeout=REQUEST_TIMEOUT_SECONDS) as resp:
+        with request.urlopen(req, timeout=GSB_TIMEOUT) as resp:
             data = _read_json_response(resp)
             if data is None:
                 return {"matches": []}, None
@@ -164,6 +166,16 @@ def _apply_remote_reputation(url, findings):
         findings.append("Remote URL reputation is disabled (missing API keys).")
 
     return 0, 0, 0
+
+
+def _safe_remote_row(url):
+    findings_local = []
+    try:
+        penalty, ipqs_inc, gsb_inc = _apply_remote_reputation(url, findings_local)
+        return penalty, ipqs_inc, gsb_inc, findings_local
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).warning("URL reputation error for %s: %s", url, exc)
+        return 0, 0, 0, [f"URL reputation lookup failed for {url}."]
 
 
 def scan_urls(urls):
@@ -235,12 +247,17 @@ def scan_urls(urls):
             risk_penalty += 15
             findings.append(f"Domain does not resolve in DNS: {host}")
 
-    # Remote reputation check with fallback: IPQS -> Google Safe Browsing.
-    for url in scanned[:REMOTE_LOOKUP_LIMIT]:
-        penalty, ipqs_inc, gsb_inc = _apply_remote_reputation(url, findings)
-        risk_penalty += penalty
-        ipqs_flagged += ipqs_inc
-        gsb_flagged += gsb_inc
+    # Remote reputation: IPQS with GSB fallback. Independent requests run concurrently.
+    lookup_batch = scanned[:REMOTE_LOOKUP_LIMIT]
+    if lookup_batch:
+        workers = max(2, min(SCANNER_MAX_WORKERS, len(lookup_batch)))
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            batches = list(ex.map(_safe_remote_row, lookup_batch))
+        for penalty, ipqs_inc, gsb_inc, local_findings in batches:
+            risk_penalty += penalty
+            ipqs_flagged += ipqs_inc
+            gsb_flagged += gsb_inc
+            findings.extend(local_findings)
 
     deduped_findings = list(dict.fromkeys(findings))
 

@@ -1,10 +1,14 @@
-from typing import Any, Dict, List
+import logging
+import time
+from typing import Any, Dict
+
 from scanners.base import ScanContext
 from services.scanner_pipeline import build_default_pipeline, collect_email_candidates, normalize_urls
 from services.verdict_engine import build_verdict
 
 
 def analyze_email(data: Dict[str, Any]) -> Dict[str, Any]:
+    _t0 = time.perf_counter()
     subject = data.get("subject", "")
     sender = data.get("from", "")
     body = data.get("body", "")
@@ -30,6 +34,12 @@ def analyze_email(data: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     pipeline_result = build_default_pipeline().run(context)
+    logging.getLogger(__name__).debug(
+        "analyze_email pipeline_wall_ms=%.1f links=%s attach=%s",
+        (time.perf_counter() - _t0) * 1000.0,
+        len(context.urls),
+        len(context.attachments),
+    )
     breakdown = pipeline_result["breakdown"]
     score = max(0, min(100, 100 - int(breakdown["totalPenalty"])))
     malicious_score = 100 - score

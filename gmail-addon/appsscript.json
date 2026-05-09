@@ -12,7 +12,8 @@
       "name": "PhishWall",
       "logoUrl": "https://drive.google.com/uc?export=view&id=1B0pLLT7MDD8mK_n7crhnHrV3pLD0JuKz",
       "layoutProperties": {
-        "primaryColor": "#B167F4"
+        "primaryColor": "#1a73e8",
+        "secondaryColor": "#1a73e8"
       }
     },
     "gmail": {

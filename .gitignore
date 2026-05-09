@@ -54,6 +54,8 @@ Thumbs.db
 Desktop.ini
 
 # -------------------------------
-# Project-specific generated files
+# Project-specific generated / verification artifacts
 # -------------------------------
 phishwall_backend/TEST_RUN_LOG.md
+.clasp_verify/
+clasp_verify/

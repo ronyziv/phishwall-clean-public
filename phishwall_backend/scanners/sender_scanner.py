@@ -1,8 +1,11 @@
 import json
+import logging
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib import parse, request
 
+from scanners.external_http_config import SCANNER_MAX_WORKERS, VT_DOMAIN_TIMEOUT
 from scanners.ipqs_email_client import lookup_email
 from scanners.lookalike_domain_scanner import (
     analyze_lookalike_domain,
@@ -58,7 +61,7 @@ def _virustotal_domain_lookup(domain):
     endpoint = "https://www.virustotal.com/api/v3/domains/" + parse.quote(domain, safe="")
     req = request.Request(endpoint, headers={"x-apikey": api_key})
     try:
-        with request.urlopen(req, timeout=3) as resp:
+        with request.urlopen(req, timeout=VT_DOMAIN_TIMEOUT) as resp:
             payload = resp.read().decode("utf-8", errors="ignore")
             return json.loads(payload)
     except Exception:
@@ -178,6 +181,14 @@ def _score_ipqs_email(ipqs):
     return risk_delta, flagged, findings
 
 
+def _safe_scan_email_reputation(email_value):
+    try:
+        return _scan_email_reputation(email_value)
+    except Exception as exc:  # noqa: BLE001 — external stack; return neutral fallthrough
+        logging.getLogger(__name__).warning("Sender reputation error for %s: %s", email_value, exc)
+        return 0, 0, [f"Sender reputation lookup failed for {email_value}; used local checks only."]
+
+
 def _scan_email_reputation(email_value):
     findings = []
     ipqs_flagged = 0
@@ -257,13 +268,26 @@ def scan_sender(sender_value, email_candidates=None, context_text=""):
             f"Email content references '{brand_from_context}' while sender domain is '{sender_domain}'."
         )
 
-    for email_value in all_emails:
-        combined_penalty, email_ipqs_flagged, email_findings = _scan_email_reputation(email_value)
-        risk_penalty += combined_penalty
-        ipqs_flagged += email_ipqs_flagged
-        findings.extend(email_findings)
+    vt = None
+    if all_emails:
+        workers = min(SCANNER_MAX_WORKERS, max(2, len(all_emails) + 1))
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            rep_futures = {ex.submit(_safe_scan_email_reputation, ev): ev for ev in all_emails}
+            vt_future = ex.submit(_virustotal_domain_lookup, sender_domain) if sender_domain else None
+            for fut in as_completed(rep_futures):
+                combined_penalty, email_ipqs_flagged, email_findings = fut.result()
+                risk_penalty += combined_penalty
+                ipqs_flagged += email_ipqs_flagged
+                findings.extend(email_findings)
+            if vt_future is not None:
+                try:
+                    vt = vt_future.result()
+                except Exception as exc:  # noqa: BLE001
+                    logging.getLogger(__name__).warning("VirusTotal lookup error: %s", exc)
+                    vt = None
+    else:
+        vt = _virustotal_domain_lookup(sender_domain) if sender_domain else None
 
-    vt = _virustotal_domain_lookup(sender_domain)
     if vt:
         stats = ((vt.get("data") or {}).get("attributes") or {}).get("last_analysis_stats") or {}
         malicious = int(stats.get("malicious", 0) or 0)

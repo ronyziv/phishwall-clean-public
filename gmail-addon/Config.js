@@ -1,8 +1,8 @@
-// Set to your public backend: https://<host>/scan (see README Run locally → ngrok + deploy).
+// Set to your public backend: https://<host>/scan (see README.md and docs/getting-started.md).
 const API_URL = "https://YOUR_PUBLIC_HOST_HERE/scan";
 
 const APP_NAME = "PhishWall";
-const APP_SUBTITLE = "Malicious Email Analysis";
+const APP_SUBTITLE = "Email safety scan";
 const APP_LOGO_URL = "https://drive.google.com/uc?export=view&id=1B0pLLT7MDD8mK_n7crhnHrV3pLD0JuKz";
 
 const LANG_HE = "he";
@@ -19,17 +19,17 @@ const TIPS = {
     "If something feels off, open the service manually in your browser instead of using the email link."
   ],
   he: [
-    "אל תפתחי קבצים מצורפים לא צפויים, במיוחד קבצי ‎.zip‎, ‎.exe‎, ‎.js‎ או מסמכי Office שמבקשים להפעיל מאקרו.",
-    "בדקי היטב את השולח. שם מוכר לא אומר שכתובת המייל באמת בטוחה.",
-    "לפני לחיצה על קישור, בדקי לאן הוא מוביל. גם מייל שנראה אמין יכול להפנות לאתר חשוד.",
-    "היזהרי מהודעות לחוצות שמבקשות לפעול מיד, לאפס סיסמה או לבצע תשלום.",
-    "אם משהו מרגיש לא תקין, היכנסי לשירות ידנית דרך הדפדפן במקום דרך הקישור שבמייל."
+    "קבצים מצורפים לא צפויים — במיוחד .zip, .exe, .js ומסמכי Office עם מאקרו — אל תפתחו.",
+    "שם תצוגה מוכר לא מבטיח שהכתובת באמת שייכת למי שכתוב.",
+    "לפני לחיצה — בדקו לאן הקישור מוביל. גם מייל שנראה תקין עלול לכוון לאתר חשוד.",
+    "הודעות דוחקות (איפוס סיסמה, תשלום, פעולה מיידית) — רגע של בדיקה לפני המשך.",
+    "אם משהו מרגיש לא נכון, היכנסו לשירות בכתובת הרגילה דרך הדפדפן, לא דרך הקישור במייל."
   ],
   es: [
-    "No abras archivos adjuntos inesperados, especialmente .zip, .exe, .js o documentos de Office que pidan habilitar macros.",
-    "Verifica bien al remitente. Un nombre conocido no garantiza que la dirección de correo sea segura.",
-    "Antes de hacer clic en un enlace, revisa a dónde dirige. Un correo que parece confiable puede llevar a un sitio sospechoso.",
-    "Ten cuidado con mensajes urgentes que te piden actuar de inmediato, restablecer una contraseña o enviar un pago.",
-    "Si algo parece extraño, abre el servicio manualmente en el navegador en lugar de usar el enlace del correo."
+    "No abras adjuntos inesperados — especialmente .zip, .exe, .js o documentos de Office con macros.",
+    "Un nombre conocido no garantiza que la dirección sea legítima.",
+    "Antes de hacer clic, revisa a dónde lleva el enlace. Un correo de aspecto confiable puede llevar a un sitio sospechoso.",
+    "Cuidado con mensajes urgentes (restablecer contraseña, pago, acción inmediata) — verifica antes.",
+    "Si algo no parece bien, entra al servicio por el navegador en la dirección habitual, no por el enlace del correo."
   ]
 };

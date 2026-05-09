@@ -1,11 +1,15 @@
 import base64
+import logging
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Dict, List, Optional, Tuple
 from urllib import parse, request
 
 import cv2  # type: ignore[import-not-found]
 import numpy as np
+
+from scanners.external_http_config import QR_FETCH_TIMEOUT, SCANNER_MAX_WORKERS
 
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
@@ -34,7 +38,7 @@ QR_LINK_HINT_TERMS = (
 )
 IMAGE_LINK_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 REMOTE_QR_FETCH_LIMIT = 3
-FETCH_TIMEOUT_SECONDS = 4
+FETCH_TIMEOUT_SECONDS = QR_FETCH_TIMEOUT
 
 
 def _is_image_attachment(filename: str, mime_type: str) -> bool:
@@ -205,6 +209,55 @@ def scan_qr_attachments(attachments: List[dict]) -> Dict[str, object]:
     }
 
 
+def _safe_fetch_one_linked(
+    url: str,
+    fetch: Callable[[str], Optional[bytes]],
+) -> Tuple[str, Dict[str, object]]:
+    """
+    Fetch + decode a single QR-related URL on a worker thread (network-bound).
+    """
+    scanned_urls = 1
+    decoded_payloads: List[str] = []
+    decoded_count = 0
+    risk_penalty = 0
+    findings: List[str] = []
+    payload: Optional[bytes] = None
+    try:
+        payload = fetch(url)
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).debug("QR-linked fetch aborted %s: %s", url, exc)
+        payload = None
+    if not payload:
+        findings.append(f"Could not fetch/decode QR-linked resource: {url}")
+        risk_penalty += 3
+        return url, {
+            "scanned": scanned_urls,
+            "decoded_payloads": decoded_payloads,
+            "decoded_count": decoded_count,
+            "risk_penalty": risk_penalty,
+            "findings": findings,
+        }
+
+    source_payloads, source_findings, source_penalty = _decode_qr_payloads_for_source(
+        payload, f"linked resource '{url}'"
+    )
+    if source_payloads:
+        decoded_count += len(source_payloads)
+        decoded_payloads.extend(source_payloads)
+        findings.extend(source_findings)
+        risk_penalty += source_penalty + 4
+    else:
+        findings.append(f"QR-related linked resource fetched but no QR decoded: {url}")
+        risk_penalty += 2
+    return url, {
+        "scanned": scanned_urls,
+        "decoded_payloads": decoded_payloads,
+        "decoded_count": decoded_count,
+        "risk_penalty": risk_penalty,
+        "findings": findings,
+    }
+
+
 def scan_qr_linked_resources(
     urls: List[str],
     fetcher: Optional[Callable[[str], Optional[bytes]]] = None,
@@ -228,27 +281,25 @@ def scan_qr_linked_resources(
         risk_penalty += 7
         findings.append(f"QR-related linked resource detected: {url}")
 
-    for url in qr_candidate_urls[:REMOTE_QR_FETCH_LIMIT]:
-        scanned_urls += 1
-        payload = fetch(url)
-        if not payload:
-            findings.append(f"Could not fetch/decode QR-linked resource: {url}")
-            # Keep stronger-than-normal effect even when fetch fails.
-            risk_penalty += 3
-            continue
-
-        source_payloads, source_findings, source_penalty = _decode_qr_payloads_for_source(
-            payload, f"linked resource '{url}'"
-        )
-        if source_payloads:
-            decoded_count += len(source_payloads)
-            decoded_payloads.extend(source_payloads)
-            findings.extend(source_findings)
-            # Decoded remote QR gets stronger weight than attachment decode.
-            risk_penalty += source_penalty + 4
-        else:
-            findings.append(f"QR-related linked resource fetched but no QR decoded: {url}")
-            risk_penalty += 2
+    fetch_batch = qr_candidate_urls[:REMOTE_QR_FETCH_LIMIT]
+    if len(fetch_batch) <= 1:
+        for url in fetch_batch:
+            _, part = _safe_fetch_one_linked(url, fetch)
+            scanned_urls += int(part["scanned"])
+            decoded_payloads.extend(part["decoded_payloads"])  # type: ignore[arg-type]
+            decoded_count += int(part["decoded_count"])
+            findings.extend(part["findings"])  # type: ignore[arg-type]
+            risk_penalty += int(part["risk_penalty"])
+    else:
+        workers = max(2, min(SCANNER_MAX_WORKERS, len(fetch_batch)))
+        with ThreadPoolExecutor(max_workers=min(workers, REMOTE_QR_FETCH_LIMIT)) as ex:
+            parts = list(ex.map(lambda u: _safe_fetch_one_linked(u, fetch), fetch_batch))
+        for _, part in parts:
+            scanned_urls += int(part["scanned"])
+            decoded_payloads.extend(part["decoded_payloads"])  # type: ignore[arg-type]
+            decoded_count += int(part["decoded_count"])
+            findings.extend(part["findings"])  # type: ignore[arg-type]
+            risk_penalty += int(part["risk_penalty"])
 
     risk_penalty = min(risk_penalty, 42)
     deduped_payloads = list(dict.fromkeys(decoded_payloads))

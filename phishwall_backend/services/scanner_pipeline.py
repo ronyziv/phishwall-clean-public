@@ -1,10 +1,13 @@
 import json
+import logging
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, List
 
 from scanners.attachment_scanner import scan_attachments
 from scanners.base import ScanContext, Scanner, ScannerResult
+from scanners.external_http_config import SCANNER_MAX_WORKERS
 from scanners.keyword_scanner import scan_keywords
 from scanners.language_scanner import scan_language_quality
 from scanners.qr_scanner import scan_qr_attachments, scan_qr_linked_resources
@@ -81,6 +84,30 @@ def _load_priority_keywords() -> Dict[str, List[str]]:
 
 
 PRIORITY_KEYWORDS = _load_priority_keywords()
+
+
+def _consume_scan_result(
+    state: Dict[str, Any],
+    breakdown: Dict[str, int],
+    summaries: Dict[str, Dict[str, Any]],
+    risk_indicators: List[str],
+    info_findings: List[str],
+    risk_words_holder: List[int],
+    result: ScannerResult,
+) -> None:
+    state[result.name] = {
+        "breakdown": result.breakdown,
+        "summary": result.summary,
+        "metadata": result.metadata,
+    }
+    risk_indicators.extend(result.risk_findings)
+    info_findings.extend(result.info_findings)
+    for key, value in result.breakdown.items():
+        breakdown[key] = int(breakdown.get(key, 0)) + int(value)
+    if result.risk_words is not None:
+        risk_words_holder[0] = int(result.risk_words)
+    if result.summary:
+        summaries[result.name] = result.summary
 
 
 class KeywordScannerAdapter:
@@ -251,8 +278,12 @@ class QrScannerAdapter:
         return has_attachments or has_urls
 
     def run(self, context: ScanContext, state: Dict[str, Any]) -> ScannerResult:
-        attachment_result = scan_qr_attachments(context.attachments)
-        linked_result = scan_qr_linked_resources(context.urls)
+        with ThreadPoolExecutor(max_workers=2) as qr_pool:
+            fa = qr_pool.submit(scan_qr_attachments, context.attachments)
+            fb = qr_pool.submit(scan_qr_linked_resources, context.urls)
+            attachment_result = fa.result()
+            linked_result = fb.result()
+
         findings = _to_str_list(attachment_result.get("findings")) + _to_str_list(linked_result.get("findings"))
         risk_penalty = _to_int(attachment_result.get("riskPenalty")) + _to_int(linked_result.get("riskPenalty"))
         qr_detected = bool(attachment_result.get("qrDetected", False)) or bool(_to_int(linked_result.get("linkedDecodedCount")))
@@ -371,8 +402,70 @@ class AttachmentScannerAdapter:
 
 
 class ScannerPipeline:
+    # Phase grouping: scanners in a phase touch only ScanContext (+ shared state merged after the phase).
+    # Phase 2 must stay after Phase 1 because priority_threats reads keyword/sender intermediates.
+
+    PHASE1_ORDER = ["keywords", "language", "sender", "time"]
+    PHASE2_ORDER = ["priority_threats"]
+    PHASE3_ORDER = ["qr", "link_base", "url", "attachments"]
+
     def __init__(self, scanners: List[Scanner]):
         self.scanners = scanners
+
+    def _run_phase(self, ordered_names: List[str], context: ScanContext, state: Dict[str, Any], **agg) -> None:
+        breakdown: Dict[str, int] = agg["breakdown"]
+        summaries: Dict[str, Dict[str, Any]] = agg["summaries"]
+        risk_indicators: List[str] = agg["risk_indicators"]
+        info_findings: List[str] = agg["info_findings"]
+        risk_words_holder: List[int] = agg["risk_words_holder"]
+
+        by_name = {scanner.name: scanner for scanner in self.scanners}
+        pending: List[Scanner] = []
+        for name in ordered_names:
+            scanner = by_name.get(name)
+            if scanner and scanner.applies(context, state):
+                pending.append(scanner)
+
+        if not pending:
+            return
+
+        _log = logging.getLogger(__name__)
+        if len(pending) == 1:
+            try:
+                result = pending[0].run(context, state)
+            except Exception:
+                _log.exception("Scanner '%s' failed; continuing without its penalties.", pending[0].name)
+                result = ScannerResult(
+                    name=pending[0].name,
+                    info_findings=[
+                        "A scan stage encountered an internal error; other checks still apply."
+                    ],
+                    breakdown={},
+                )
+            _consume_scan_result(state, breakdown, summaries, risk_indicators, info_findings, risk_words_holder, result)
+            return
+
+        workers = max(2, min(SCANNER_MAX_WORKERS, len(pending)))
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            future_map = {executor.submit(scan.run, context, state): scan for scan in pending}
+            completed_by_name: Dict[str, ScannerResult] = {}
+            for fut in as_completed(future_map):
+                scanner = future_map[fut]
+                try:
+                    completed_by_name[scanner.name] = fut.result()
+                except Exception:
+                    _log.exception("Scanner '%s' failed; continuing without its penalties.", scanner.name)
+                    completed_by_name[scanner.name] = ScannerResult(
+                        name=scanner.name,
+                        info_findings=[
+                            "A scan stage encountered an internal error; other checks still apply."
+                        ],
+                        breakdown={},
+                    )
+
+        for scan in pending:
+            result = completed_by_name[scan.name]
+            _consume_scan_result(state, breakdown, summaries, risk_indicators, info_findings, risk_words_holder, result)
 
     def run(self, context: ScanContext) -> Dict[str, Any]:
         state: Dict[str, Any] = {}
@@ -391,26 +484,20 @@ class ScannerPipeline:
             "attachments": 0,
         }
         summaries: Dict[str, Dict[str, Any]] = {}
-        risk_words = 0
+        risk_words_holder = [0]
 
-        for scanner in self.scanners:
-            if not scanner.applies(context, state):
-                continue
-            result = scanner.run(context, state)
-            state[result.name] = {
-                "breakdown": result.breakdown,
-                "summary": result.summary,
-                "metadata": result.metadata,
-            }
+        phase_kwargs = dict(
+            breakdown=breakdown,
+            summaries=summaries,
+            risk_indicators=risk_indicators,
+            info_findings=info_findings,
+            risk_words_holder=risk_words_holder,
+        )
+        self._run_phase(list(self.PHASE1_ORDER), context, state, **phase_kwargs)
+        self._run_phase(list(self.PHASE2_ORDER), context, state, **phase_kwargs)
+        self._run_phase(list(self.PHASE3_ORDER), context, state, **phase_kwargs)
 
-            risk_indicators.extend(result.risk_findings)
-            info_findings.extend(result.info_findings)
-            for key, value in result.breakdown.items():
-                breakdown[key] = int(breakdown.get(key, 0)) + int(value)
-            if result.risk_words is not None:
-                risk_words = int(result.risk_words)
-            if result.summary:
-                summaries[result.name] = result.summary
+        risk_words = risk_words_holder[0]
 
         total_penalty = sum(
             int(breakdown[key])

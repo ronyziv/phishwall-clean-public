@@ -1,7 +1,7 @@
 from typing import Any, Dict, List
 
-# Prior threads from the mailbox (add-on supplied). Used only to raise Dangerous thresholds,
-# never to bypass hard blockers or reputation/QR signals.
+# Prior threads from the mailbox (add-on supplied). When eligible, makes reaching **Dangerous**
+# numerically harder (higher score bars), never to bypass hard blockers or reputation/QR signals.
 _FAMILIAR_PRIOR_THREAD_MIN = 5
 
 

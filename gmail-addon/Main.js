@@ -20,9 +20,7 @@ function buildEmailCard(e) {
 }
 
 function getPreferredLanguage(e) {
-  const stored = getStoredLanguage();
-  if (stored) return stored;
-  return getUserLanguage(e);
+  return getStoredLanguage() || getUserLanguage(e);
 }
 
 function switchLanguage(e) {

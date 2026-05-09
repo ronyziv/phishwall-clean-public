@@ -3,11 +3,14 @@ import logging
 import os
 from urllib import parse, request
 
+from scanners.external_http_config import IPQS_EMAIL_TIMEOUT
 
 IPQS_EMAIL_ENDPOINT = "https://www.ipqualityscore.com/api/json/email/"
 
+# URL-open budget (urllib); ask IPQS to finish quicker so we do not pile up threads under load.
+_CLIENT_TIMEOUT = IPQS_EMAIL_TIMEOUT
 QUERY_PARAMS = {
-    "timeout": 10,
+    "timeout": max(5, min(15, int(_CLIENT_TIMEOUT))),
     "fast": "false",
     "abuse_strictness": 1,
 }
@@ -21,7 +24,6 @@ INSUFFICIENT_CREDITS_MARKERS = (
 def lookup_email(email_value):
     api_key = os.environ.get("IPQS_API_KEY", "").strip()
     key_loaded = bool(api_key)
-    logging.info("IPQS startup: IPQS_API_KEY loaded=%s", key_loaded)
 
     if not key_loaded:
         logging.warning("IPQS fallback used: missing IPQS_API_KEY.")
@@ -38,10 +40,10 @@ def lookup_email(email_value):
         + parse.quote(email_value, safe="")
     )
     endpoint = f"{endpoint_base}?{parse.urlencode(QUERY_PARAMS)}"
-    logging.info("IPQS request attempted for sender email.")
+    logging.getLogger(__name__).debug("IPQS email lookup: %s", email_value[:80])
 
     try:
-        with request.urlopen(endpoint, timeout=10) as resp:
+        with request.urlopen(endpoint, timeout=_CLIENT_TIMEOUT) as resp:
             payload = resp.read().decode("utf-8", errors="ignore")
             data = json.loads(payload) if payload.strip() else {}
     except TimeoutError:
