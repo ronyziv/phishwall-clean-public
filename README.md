@@ -207,25 +207,23 @@ Set the Add-on backend endpoint in `gmail-addon/Config.js`:
 
 ## Design Decisions and Why
 
-### Explainability over black-box scoring
-- Decision: return detailed indicators and score breakdown.
-- Why: the assignment is evaluated by reviewers; explainable output is easier to validate during interview discussion.
+### Local heuristics as the default decision engine
+- The core scanning path is rule-based and always available (keywords, language, sender, URL, attachment, QR, and BEC signals).
+- This keeps behavior deterministic and testable even when external providers are unavailable.
 
-### Rule-based core with optional reputation enrichment
-- Decision: local heuristics always run, external APIs are additive.
-- Why: deterministic behavior and graceful degradation without API keys/credits.
+### External reputation as additive enrichment
+- External checks are integrated as enrichment, not as a hard dependency.
+- Current implementation:
+  - **IPQualityScore Email**: `phishwall_backend/scanners/ipqs_email_client.py` (used by `sender_scanner.py`)
+  - **VirusTotal Domain**: `phishwall_backend/scanners/sender_scanner.py`
+  - **IPQualityScore URL**: `phishwall_backend/scanners/url_scanner.py`
+  - **Google Safe Browsing** (fallback): `phishwall_backend/scanners/url_scanner.py`
+- If keys are missing, out of credits, or provider calls fail, the system falls back to local findings and still returns a complete result.
 
-### Assignment deployment strategy: local backend + ngrok
-- Decision: default interview setup is local runtime exposed through ngrok.
-- Why this matches requirements:
-  - “A backend service is expected. How and where you run it is up to you.”
-  - “The solution should be deployable to a real Gmail account and demonstrated live during the interview.”
-  - “The solution does not need to be production-ready.”
-- Practical result: fastest path to a live, real-account demo with minimal DevOps overhead.
-
-### Tradeoff of local + ngrok
-- The demo depends on your machine and network being up during interview time.
-- A hosted backend is usually more stable but requires extra setup not strictly needed for this assignment.
+### Deployment approach for this project: local backend + ngrok
+- The project uses a local FastAPI runtime exposed through ngrok for practical iteration speed and low operational overhead.
+- This setup keeps development and demo feedback loops short (code change -> restart -> immediate real Gmail validation).
+- It can later be replaced with an external hosted backend without changing the add-on architecture (only endpoint/runtime configuration changes are needed).
 
 ---
 
