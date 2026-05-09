@@ -1,3 +1,23 @@
+function extractSenderMailbox(fromHeader) {
+  var raw = String(fromHeader || "").trim();
+  var angled = raw.match(/<([^>]+)>/);
+  var inner = angled ? angled[1].trim() : raw;
+  inner = inner.replace(/^mailto:/i, "").trim();
+  return inner.toLowerCase();
+}
+
+function countPriorThreadsForSender(mailboxEmail) {
+  if (!mailboxEmail || mailboxEmail.indexOf("@") === -1) return 0;
+  var escaped = mailboxEmail.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  var query = "from:\"" + escaped + "\" newer_than:180d";
+  try {
+    var threads = GmailApp.search(query, 0, 50);
+    return threads ? threads.length : 0;
+  } catch (err) {
+    return 0;
+  }
+}
+
 function extractEmailData(e) {
   const accessToken = e.gmail.accessToken;
   GmailApp.setCurrentMessageAccessToken(accessToken);
@@ -11,6 +31,8 @@ function extractEmailData(e) {
   const bodySnippet = body.substring(0, 500);
   const urls = extractUrlsFromText(body);
   const attachments = extractAttachments(message);
+  var mailbox = extractSenderMailbox(from);
+  var priorThreads = countPriorThreadsForSender(mailbox);
 
   return {
     subject: subject,
@@ -18,7 +40,8 @@ function extractEmailData(e) {
     body: body,
     body_snippet: bodySnippet,
     urls: urls,
-    attachments: attachments
+    attachments: attachments,
+    sender_prior_thread_count: priorThreads
   };
 }
 

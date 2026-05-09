@@ -1,4 +1,5 @@
-const API_URL = "https://dispense-why-glamour.ngrok-free.dev/scan";
+// Set to your public backend: https://<host>/scan (see README Run locally → ngrok + deploy).
+const API_URL = "https://YOUR_PUBLIC_HOST_HERE/scan";
 
 const APP_NAME = "PhishWall";
 const APP_SUBTITLE = "Malicious Email Analysis";

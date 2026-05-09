@@ -126,6 +126,19 @@ class ScanServiceTests(unittest.TestCase):
         findings_text = " ".join(result["riskIndicators"]).lower()
         self.assertIn("qr-related linked resource", findings_text)
 
+    def test_bec_not_fully_detected_when_only_lexical_signals_missing(self):
+        """Casual message + Gmail + display-brand mismatch must not satisfy multi-signal BEC."""
+        payload = {
+            "subject": "Look at this",
+            "from": "Microsoft Alerts <classmate@gmail.com>",
+            "body": "Hi, check the attachments for class.",
+            "body_snippet": "",
+            "urls": [],
+            "attachments": [],
+        }
+        result = analyze_email(payload)
+        self.assertFalse(result["priorityThreatSummary"]["becDetected"])
+
     def test_detects_bec_pattern_with_finance_and_pressure(self):
         payload = {
             "subject": "Confidential: urgent wire transfer today",

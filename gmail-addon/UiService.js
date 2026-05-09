@@ -494,6 +494,24 @@ function buildLocalizedRecommendation(result, lang) {
     return "Do not open this email, click links, or download/open attached files.";
   }
   if (verdict === "suspicious") {
+    if (result.familiarSenderCalibration) {
+      if (lang === LANG_HE) {
+        return (
+          "פתחי קישורים או קבצים מצורפים רק אם את מכירה את השולח והתוכן עומד בציפייה (למשל מסמך שציפית לקבל). " +
+          "אם משהו מרגיש חריג — אמתי עם השולח בערוץ נפרד."
+        );
+      }
+      if (lang === LANG_ES) {
+        return (
+          "Abre enlaces o adjuntos solo si reconoces al remitente y esperabas este tipo de archivo o mensaje. " +
+          "Si algo sorprende, verifica por otro medio de confianza."
+        );
+      }
+      return (
+        "Only open links or attachments if you recognize this sender and expected this type of file or message. " +
+        "If anything feels off, verify through a separate trusted channel."
+      );
+    }
     if (lang === LANG_HE) {
       return "אל תלחצי על קישורים או קבצים עד שתאמת/י את השולח דרך ערוץ מהימן.";
     }

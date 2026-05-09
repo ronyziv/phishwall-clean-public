@@ -30,6 +30,7 @@ function normalizeBackendResult(result) {
       icon: "⚪",
       verdictReasoning: "",
       recommendation: "",
+      familiarSenderCalibration: false,
       comments: [],
       riskIndicators: [],
       infoFindings: ["No valid response returned from backend."],
@@ -46,6 +47,7 @@ function normalizeBackendResult(result) {
     icon: result.icon || "⚪",
       verdictReasoning: result.verdictReasoning || "",
       recommendation: result.recommendation || "",
+    familiarSenderCalibration: !!result.familiarSenderCalibration,
     comments: getArrayData(result.comments),
     riskIndicators: Array.isArray(result.riskIndicators)
       ? result.riskIndicators

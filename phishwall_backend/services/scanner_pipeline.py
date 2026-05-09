@@ -198,7 +198,10 @@ class PriorityThreatScannerAdapter:
         findings: List[str] = []
 
         bec_finance_hit = any(term in normalized_text for term in bec_finance_terms)
-        bec_pressure_hit = any(term in normalized_text for term in bec_pressure_terms) or keyword_penalty >= 12
+        lexical_pressure_hit = any(term in normalized_text for term in bec_pressure_terms)
+        # Require explicit pressure wording in the merged text OR strong finance+keyword coupling.
+        # Generic keyword-score spikes alone must not substitute for BEC "pressure" (reduces study/personal FP).
+        bec_pressure_hit = lexical_pressure_hit or (keyword_penalty >= 14 and bec_finance_hit)
         bec_impersonation_hit = _contains_any(
             " | ".join(sender_raw.get("findings", [])),
             [

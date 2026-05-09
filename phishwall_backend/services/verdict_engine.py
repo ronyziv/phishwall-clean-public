@@ -1,9 +1,38 @@
 from typing import Any, Dict, List
 
+# Prior threads from the mailbox (add-on supplied). Used only to raise Dangerous thresholds,
+# never to bypass hard blockers or reputation/QR signals.
+_FAMILIAR_PRIOR_THREAD_MIN = 5
+
 
 def _contains_any(text: str, patterns: List[str]) -> bool:
     lowered = str(text or "").lower()
     return any(pattern in lowered for pattern in patterns)
+
+
+def _mailbox_familiarity_moderates(
+    prior_threads: int,
+    hard_blocker: bool,
+    has_sender_reputation_hit: bool,
+    has_executable: bool,
+    has_disguised_attachment: bool,
+    has_risky_archive: bool,
+    has_qr_phishing: bool,
+    has_qr_url_payload: bool,
+    ipqs_url_flagged: int,
+    gsb_url_flagged: int,
+) -> bool:
+    if prior_threads < _FAMILIAR_PRIOR_THREAD_MIN:
+        return False
+    if hard_blocker or has_sender_reputation_hit:
+        return False
+    if has_executable or has_disguised_attachment or has_risky_archive:
+        return False
+    if has_qr_phishing or has_qr_url_payload:
+        return False
+    if ipqs_url_flagged > 0 or gsb_url_flagged > 0:
+        return False
+    return True
 
 
 def build_verdict(
@@ -15,6 +44,7 @@ def build_verdict(
     qr_summary: Dict[str, Any],
     priority_threat_summary: Dict[str, Any],
     risk_indicators: List[str],
+    sender_prior_thread_count: int = 0,
 ) -> Dict[str, Any]:
     indicators_text = " | ".join(risk_indicators)
 
@@ -77,19 +107,44 @@ def build_verdict(
     strong_count = len(strong_indicators)
     hard_blocker = has_executable or has_disguised_attachment or sender_summary.get("vtFlagged", 0) > 0
 
+    prior_threads = max(0, int(sender_prior_thread_count or 0))
+    familiar_mod = _mailbox_familiarity_moderates(
+        prior_threads,
+        hard_blocker,
+        has_sender_reputation_hit,
+        has_executable,
+        has_disguised_attachment,
+        has_risky_archive,
+        has_qr_phishing,
+        has_qr_url_payload,
+        int(url_summary.get("ipqsFlagged", 0) or 0),
+        int(url_summary.get("gsbFlagged", 0) or 0),
+    )
+
     verdict = "Safe"
     color = "#2E7D32"
     icon = "🟢"
 
-    dangerous_condition = (
-        hard_blocker
-        or malicious_score >= 60
-        or (has_qr_url_payload and malicious_score >= 25)
-        or (has_qr_phishing and malicious_score >= 30)
-        or (has_bec_behavior and malicious_score >= 35)
-        or (malicious_score >= 45 and strong_count >= 1)
-        or (malicious_score >= 35 and strong_count >= 2)
-    )
+    if familiar_mod:
+        dangerous_condition = (
+            hard_blocker
+            or malicious_score >= 68
+            or (has_qr_url_payload and malicious_score >= 32)
+            or (has_qr_phishing and malicious_score >= 38)
+            or (has_bec_behavior and malicious_score >= 58)
+            or (malicious_score >= 60 and strong_count >= 1)
+            or (malicious_score >= 55 and strong_count >= 2)
+        )
+    else:
+        dangerous_condition = (
+            hard_blocker
+            or malicious_score >= 60
+            or (has_qr_url_payload and malicious_score >= 25)
+            or (has_qr_phishing and malicious_score >= 30)
+            or (has_bec_behavior and malicious_score >= 35)
+            or (malicious_score >= 45 and strong_count >= 1)
+            or (malicious_score >= 35 and strong_count >= 2)
+        )
 
     suspicious_condition = (
         malicious_score >= 20
@@ -125,7 +180,15 @@ def build_verdict(
             )
         else:
             reasoning = "This email has multiple warning signals and needs manual verification."
-        recommendation = "Avoid clicking links or opening attachments until you verify the sender through a trusted channel."
+        if familiar_mod:
+            recommendation = (
+                "Only open links or attachments if you recognize this sender and expected this "
+                "type of file. If anything is unexpected, verify through a separate trusted channel."
+            )
+        else:
+            recommendation = (
+                "Avoid clicking links or opening attachments until you verify the sender through a trusted channel."
+            )
     else:
         reasoning = "No strong malicious indicators were detected in this message."
         recommendation = "Proceed carefully and keep standard email hygiene before opening links or files."
@@ -137,4 +200,5 @@ def build_verdict(
         "reasoning": reasoning,
         "recommendation": recommendation,
         "strongIndicators": strong_indicators,
+        "familiarSenderCalibration": bool(familiar_mod and verdict == "Suspicious"),
     }

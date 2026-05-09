@@ -23,6 +23,8 @@ class ScanRequest(BaseModel):
     timestamp: str = Field(default="", max_length=100)
     urls: List[str] = Field(default_factory=list, max_length=300)
     attachments: List[AttachmentInput] = Field(default_factory=list, max_length=100)
+    # Optional: Gmail add-on counts threads from this mailbox with the same sender (e.g. newer_than:180d).
+    sender_prior_thread_count: int = Field(default=0, ge=0, le=200)
 
     model_config = {
         "populate_by_name": True,
@@ -42,6 +44,7 @@ class UrlSummary(BaseModel):
     count: int
     unresolvedHosts: int
     ipqsFlagged: int
+    gsbFlagged: int = 0
 
 
 class SenderSummary(BaseModel):
@@ -87,6 +90,7 @@ class ScanResponse(BaseModel):
     icon: str
     verdictReasoning: str
     recommendation: str
+    familiarSenderCalibration: bool = False
     links: int
     riskWords: int
     comments: List[str]

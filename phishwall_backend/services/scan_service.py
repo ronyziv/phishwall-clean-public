@@ -10,6 +10,10 @@ def analyze_email(data: Dict[str, Any]) -> Dict[str, Any]:
     body = data.get("body", "")
     body_snippet = data.get("body_snippet", "")
     sent_at = data.get("date") or data.get("sent_at") or data.get("timestamp") or ""
+    try:
+        sender_prior_threads = max(0, min(200, int(data.get("sender_prior_thread_count", 0) or 0)))
+    except (TypeError, ValueError):
+        sender_prior_threads = 0
 
     urls = normalize_urls(data.get("urls", []), body)
     attachments = data.get("attachments", [])
@@ -47,6 +51,7 @@ def analyze_email(data: Dict[str, Any]) -> Dict[str, Any]:
         ),
         pipeline_result["summaries"].get("priority_threats", {}),
         pipeline_result["riskIndicators"],
+        sender_prior_threads,
     )
 
     return {
@@ -57,6 +62,7 @@ def analyze_email(data: Dict[str, Any]) -> Dict[str, Any]:
         "icon": verdict_data["icon"],
         "verdictReasoning": verdict_data["reasoning"],
         "recommendation": verdict_data["recommendation"],
+        "familiarSenderCalibration": verdict_data.get("familiarSenderCalibration", False),
         "reasons": verdict_data["strongIndicators"],
         "links": pipeline_result["links"],
         "riskWords": pipeline_result["riskWords"],
@@ -81,6 +87,7 @@ def analyze_email(data: Dict[str, Any]) -> Dict[str, Any]:
                 "count": 0,
                 "unresolvedHosts": 0,
                 "ipqsFlagged": 0,
+                "gsbFlagged": 0,
             },
         ),
         "senderSummary": pipeline_result["summaries"].get(
