@@ -25,7 +25,7 @@ function extractEmailData(e) {
 function extractAttachments(message) {
   const attachments = [];
   const gmailAttachments = message.getAttachments({
-    includeInlineImages: false,
+    includeInlineImages: true,
     includeAttachments: true
   });
 

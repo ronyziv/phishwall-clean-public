@@ -6,6 +6,9 @@ const TRANSLATIONS = {
     riskLevel: "רמת סיכון",
     maliciousScore: "ציון זדוניות",
     verdict: "פסק דין",
+    verdictReasoning: "נימוק ההכרעה",
+    recommendation: "המלצה מעשית",
+    prioritizedThreats: "איומים מתועדפים (QR/BEC)",
     riskIndicators: "אינדיקטורים לסיכון",
     noRiskIndicators: "לא נמצאו אינדיקטורים חזקים לסיכון.",
     scoreBreakdown: "פירוט ציון",
@@ -20,10 +23,12 @@ const TRANSLATIONS = {
     tip: "טיפ:",
     lowRisk: "נמוך",
     suspicious: "חשוד",
-    highRisk: "סיכון גבוה",
-    safeBanner: "🟢 לא נמצאו אינדיקציות חזקות לסיכון",
+    dangerous: "מסוכן - לא לפתוח",
+    safeBanner: "🟢 נראה בטוח, ללא אינדיקציות חזקות לסיכון",
     suspiciousBanner: "🟠 נמצאו סימנים שדורשים בדיקה נוספת",
-    highRiskBanner: "🔴 נמצאו אינדיקציות חזקות לסיכון במייל הזה"
+    dangerousBanner: "⛔ המייל מסוכן - לא לפתוח קישורים או קבצים",
+    noReasoning: "לא התקבל נימוק מפורש מהשרת.",
+    noRecommendation: "המלצה: בדקי את השולח בערוץ אמין לפני כל פעולה."
   },
   en: {
     welcomeTitle: "Welcome 👋",
@@ -32,6 +37,9 @@ const TRANSLATIONS = {
     riskLevel: "Risk Level",
     maliciousScore: "Maliciousness Score",
     verdict: "Verdict",
+    verdictReasoning: "Reasoning",
+    recommendation: "Recommendation",
+    prioritizedThreats: "Prioritized Threats (QR/BEC)",
     riskIndicators: "Risk Indicators",
     noRiskIndicators: "No strong risk indicators were found.",
     scoreBreakdown: "Score Breakdown",
@@ -46,10 +54,12 @@ const TRANSLATIONS = {
     tip: "Tip:",
     lowRisk: "Low",
     suspicious: "Suspicious",
-    highRisk: "High Risk",
-    safeBanner: "🟢 No strong risk indicators were found",
+    dangerous: "Dangerous / Do Not Open",
+    safeBanner: "🟢 Looks safe, no strong malicious indicators",
     suspiciousBanner: "🟠 Signals were found that require additional review",
-    highRiskBanner: "🔴 Strong risk indicators were found in this email"
+    dangerousBanner: "⛔ Dangerous email - do not open links or files",
+    noReasoning: "No explicit reasoning was returned by the backend.",
+    noRecommendation: "Recommendation: verify the sender via a trusted channel before taking action."
   },
   es: {
     welcomeTitle: "Bienvenida 👋",
@@ -58,6 +68,9 @@ const TRANSLATIONS = {
     riskLevel: "Nivel de riesgo",
     maliciousScore: "Puntuacion de malicia",
     verdict: "Veredicto",
+    verdictReasoning: "Razonamiento",
+    recommendation: "Recomendacion",
+    prioritizedThreats: "Amenazas priorizadas (QR/BEC)",
     riskIndicators: "Indicadores de riesgo",
     noRiskIndicators: "No se encontraron indicadores fuertes de riesgo.",
     scoreBreakdown: "Desglose de puntuacion",
@@ -72,10 +85,12 @@ const TRANSLATIONS = {
     tip: "Consejo:",
     lowRisk: "Bajo",
     suspicious: "Sospechoso",
-    highRisk: "Riesgo alto",
-    safeBanner: "🟢 No se encontraron indicadores fuertes de riesgo",
+    dangerous: "Peligroso / No abrir",
+    safeBanner: "🟢 Parece seguro, sin indicadores fuertes de malicia",
     suspiciousBanner: "🟠 Se encontraron senales que requieren revision adicional",
-    highRiskBanner: "🔴 Se encontraron indicadores fuertes de riesgo en este correo"
+    dangerousBanner: "⛔ Correo peligroso: no abras enlaces ni archivos",
+    noReasoning: "El backend no devolvio una explicacion explicita.",
+    noRecommendation: "Recomendacion: verifica el remitente por un canal confiable antes de actuar."
   }
 };
 
@@ -110,29 +125,14 @@ function buildResultCard(result, lang) {
   const risk = getRiskMeta(result.verdict, lang);
 
   card.addSection(buildLanguageSwitcher(lang));
-
-  card.addSection(
-    buildSection(
-      lang,
-      text.scanSummary,
-      wrapDirectionalHtml(
-        lang,
-        "<p><b>" + risk.bannerTitle + "</b></p>" +
-        "<p>" +
-        "<b>" + text.riskLevel + ":</b> " + risk.label + "<br>" +
-        "<b>" + text.maliciousScore + ":</b> " + (result.maliciousScore || 0) + "/100<br>" +
-        "<b>" + text.verdict + ":</b> " + (result.icon || "") + " " + (result.verdict || risk.label) +
-        "</p>"
-      )
-    )
-  );
+  card.addSection(buildSummarySection(result, lang, text, risk));
 
   card.addSection(
     buildSection(
       lang,
       text.riskIndicators,
       bulletListHtml(
-        result.riskIndicators || result.comments,
+        localizeItems(result.riskIndicators || result.comments, lang),
         text.noRiskIndicators
       )
     )
@@ -152,7 +152,7 @@ function buildResultCard(result, lang) {
       lang,
       text.additionalContext,
       bulletListHtml(
-        result.infoFindings,
+        localizeItems(result.infoFindings, lang),
         text.noAdditionalContext
       ),
       true
@@ -163,16 +163,50 @@ function buildResultCard(result, lang) {
     buildSection(
       lang,
       text.decisionExplanation,
-      bulletListHtml(
-        getReasons(result),
-        text.noDetailedReasons
-      ),
-      true
+      wrapDirectionalHtml(
+        lang,
+        "<p><b>" + text.verdictReasoning + ":</b> " + buildLocalizedReasoning(result, lang) + "</p>" +
+        "<p><b>" + text.recommendation + ":</b> " + buildLocalizedRecommendation(result, lang) + "</p>"
+      )
     )
   );
 
   card.addSection(buildTipSection(lang, result.tip));
   return card.build();
+}
+
+function buildSummarySection(result, lang, text, risk) {
+  const section = CardService.newCardSection().setHeader(text.scanSummary);
+  section.addWidget(
+    CardService.newTextParagraph().setText(
+      wrapDirectionalHtml(lang, "<p style=\"font-size:15px;\"><b>" + risk.bannerTitle + "</b></p>")
+    )
+  );
+  section.addWidget(
+    CardService.newTextParagraph().setText(
+      wrapDirectionalHtml(
+        lang,
+        "<p><b>" + text.verdict + ":</b> " + (result.icon || "") + " " + (result.verdict || risk.label) + "</p>"
+      )
+    )
+  );
+  section.addWidget(
+    CardService.newTextParagraph().setText(
+      wrapDirectionalHtml(
+        lang,
+        "<p><b>" + text.riskLevel + ":</b> " + risk.label + "</p>"
+      )
+    )
+  );
+  section.addWidget(
+    CardService.newTextParagraph().setText(
+      wrapDirectionalHtml(
+        lang,
+        "<p><b>" + text.maliciousScore + ":</b> " + (result.maliciousScore || 0) + "/100</p>"
+      )
+    )
+  );
+  return section;
 }
 
 function buildErrorCard(error, lang) {
@@ -248,9 +282,13 @@ function buildLanguageSwitcher(currentLang) {
 
 function bulletListHtml(items, emptyText) {
   if (!items || !items.length) {
-    return "• " + emptyText;
+    return "<p>• " + emptyText + "</p>";
   }
-  return "• " + items.map(function(item) { return String(item); }).join("<br><br>• ");
+  return items
+    .map(function(item) {
+      return "<p style=\"margin:0 0 8px 0;\">• " + String(item) + "</p>";
+    })
+    .join("");
 }
 
 function buildScoreBreakdownHtml(scoreBreakdown, lang) {
@@ -265,6 +303,7 @@ function buildScoreBreakdownHtml(scoreBreakdown, lang) {
         language: "איכות שפה",
         sender: "שולח/דומיין",
         time: "זמן שליחה",
+        priorityThreats: "איומים מתועדפים (QR/BEC)",
         linkBase: "קנס בסיס על קישורים",
         urlRaw: "URL גולמי (לפני סקייל)",
         urlApplied: "URL מוחל (אחרי סקייל)",
@@ -277,6 +316,7 @@ function buildScoreBreakdownHtml(scoreBreakdown, lang) {
         language: "Lenguaje",
         sender: "Remitente/Dominio",
         time: "Hora de envio",
+        priorityThreats: "Amenazas priorizadas (QR/BEC)",
         linkBase: "Penalizacion base de enlaces",
         urlRaw: "URL bruto (antes de escala)",
         urlApplied: "URL aplicado (despues de escala)",
@@ -288,6 +328,7 @@ function buildScoreBreakdownHtml(scoreBreakdown, lang) {
         language: "Language",
         sender: "Sender/Domain",
         time: "Sending Time",
+        priorityThreats: "Prioritized Threats (QR/BEC)",
         linkBase: "Base Link Penalty",
         urlRaw: "URL Raw (before scaling)",
         urlApplied: "URL Applied (after scaling)",
@@ -297,9 +338,11 @@ function buildScoreBreakdownHtml(scoreBreakdown, lang) {
 
   const lines = [];
   Object.keys(labels).forEach(function(key) {
-    lines.push("<b>" + labels[key] + ":</b> -" + Number(scoreBreakdown[key] || 0));
+    const rawValue = Number(scoreBreakdown[key] || 0);
+    const shownValue = rawValue > 0 ? "-" + rawValue : "0";
+    lines.push("<p style=\"margin:0 0 6px 0;\"><b>" + labels[key] + ":</b> " + shownValue + "</p>");
   });
-  return lines.join("<br>");
+  return lines.join("");
 }
 
 function buildTipSection(lang, tip) {
@@ -317,13 +360,167 @@ function getReasons(result) {
     .concat(result.infoFindings || []);
 }
 
+function localizeItems(items, lang) {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+  return items.map(function(item) {
+    return localizeIndicatorText(item, lang);
+  });
+}
+
+function localizeIndicatorText(item, lang) {
+  const original = String(item || "");
+  const normalized = original.toLowerCase();
+  if (lang === LANG_EN) {
+    return original;
+  }
+
+  const heMap = {
+    "qr-phishing pattern detected": "זוהתה תבנית QR-Phishing.",
+    "potential qr-phishing pattern detected": "זוהתה אינדיקציה אפשרית ל-QR-Phishing.",
+    "decoded qr from linked resource": "פוענח QR מקישור חיצוני.",
+    "qr-related linked resource detected": "זוהה קישור בעל מאפייני QR.",
+    "could not fetch/decode qr-linked resource": "לא ניתן היה למשוך או לפענח משאב QR מהקישור.",
+    "bec-style pattern detected": "זוהתה תבנית BEC/התחזות עסקית.",
+    "low-confidence bec-style signal detected": "זוהה סיגנל חלש של תבנית BEC.",
+    "executable attachment detected": "זוהה קובץ הרצה מצורף.",
+    "disguised attachment filename pattern detected": "זוהתה תבנית הסוואת שם קובץ מצורף.",
+    "risky archive/container attachment detected": "זוהה קובץ ארכיון/מיכל מסוכן.",
+    "look-alike domain": "זוהה דומיין דומה (look-alike).",
+    "url points to potentially dangerous downloadable file": "הקישור מפנה לקובץ להורדה שעלול להיות מסוכן.",
+    "found ": "נמצאו "
+  };
+
+  const esMap = {
+    "qr-phishing pattern detected": "Se detecto un patron de phishing con QR.",
+    "potential qr-phishing pattern detected": "Se detecto una posible senal de phishing con QR.",
+    "decoded qr from linked resource": "Se decodifico un QR desde un recurso enlazado.",
+    "qr-related linked resource detected": "Se detecto un recurso enlazado con caracteristicas de QR.",
+    "could not fetch/decode qr-linked resource": "No se pudo obtener o decodificar el recurso QR enlazado.",
+    "bec-style pattern detected": "Se detecto un patron de BEC/suplantacion empresarial.",
+    "low-confidence bec-style signal detected": "Se detecto una senal de baja confianza de BEC.",
+    "executable attachment detected": "Se detecto un archivo adjunto ejecutable.",
+    "disguised attachment filename pattern detected": "Se detecto un patron de nombre de adjunto disfrazado.",
+    "risky archive/container attachment detected": "Se detecto un adjunto de archivo comprimido/contenedor riesgoso.",
+    "look-alike domain": "Se detecto un dominio similar (look-alike).",
+    "url points to potentially dangerous downloadable file": "La URL apunta a un archivo descargable potencialmente peligroso.",
+    "found ": "Se encontraron "
+  };
+
+  const map = lang === LANG_HE ? heMap : esMap;
+  const keys = Object.keys(map);
+  for (let i = 0; i < keys.length; i++) {
+    if (normalized.indexOf(keys[i]) >= 0) {
+      return map[keys[i]];
+    }
+  }
+  return original;
+}
+
+function localizeReasonTag(tag, lang) {
+  const normalized = String(tag || "").toLowerCase();
+  const maps = {
+    he: {
+      "executable attachment": "קובץ הרצה מצורף",
+      "disguised attachment pattern": "תבנית הסוואת קובץ מצורף",
+      "risky archive attachment": "קובץ ארכיון מסוכן",
+      "sender spoofing/look-alike signs": "סימני התחזות שולח / דומיין דומה",
+      "highly suspicious links": "קישורים חשודים מאוד",
+      "sender/domain reputation alerts": "התראות מוניטין על שולח/דומיין",
+      "urgent pressure wording": "ניסוח לחץ ודחיפות",
+      "qr-phishing pattern": "תבנית פישינג מבוססת QR",
+      "bec-style impersonation pattern": "תבנית BEC/התחזות עסקית",
+    },
+    es: {
+      "executable attachment": "adjunto ejecutable",
+      "disguised attachment pattern": "patron de adjunto disfrazado",
+      "risky archive attachment": "adjunto de archivo comprimido riesgoso",
+      "sender spoofing/look-alike signs": "senales de suplantacion o dominio parecido",
+      "highly suspicious links": "enlaces altamente sospechosos",
+      "sender/domain reputation alerts": "alertas de reputacion del remitente/dominio",
+      "urgent pressure wording": "lenguaje de urgencia y presion",
+      "qr-phishing pattern": "patron de phishing con QR",
+      "bec-style impersonation pattern": "patron de BEC/suplantacion empresarial",
+    },
+    en: {
+      "executable attachment": "executable attachment",
+      "disguised attachment pattern": "disguised attachment pattern",
+      "risky archive attachment": "risky archive attachment",
+      "sender spoofing/look-alike signs": "sender spoofing/look-alike signs",
+      "highly suspicious links": "highly suspicious links",
+      "sender/domain reputation alerts": "sender/domain reputation alerts",
+      "urgent pressure wording": "urgent pressure wording",
+      "qr-phishing pattern": "QR-phishing pattern",
+      "bec-style impersonation pattern": "BEC-style impersonation pattern",
+    }
+  };
+  const languageMap = maps[lang] || maps.en;
+  return languageMap[normalized] || String(tag || "");
+}
+
+function buildLocalizedReasoning(result, lang) {
+  const text = getText(lang);
+  const reasons = getReasons(result).map(function(item) {
+    return localizeReasonTag(item, lang);
+  });
+
+  if (reasons.length) {
+    if (lang === LANG_HE) {
+      return "זוהו אינדיקטורים משמעותיים, כולל " + reasons.slice(0, 3).join(", ") + ".";
+    }
+    if (lang === LANG_ES) {
+      return "Se detectaron indicadores significativos, incluyendo " + reasons.slice(0, 3).join(", ") + ".";
+    }
+    return "Significant indicators were detected, including " + reasons.slice(0, 3).join(", ") + ".";
+  }
+
+  if (result.verdictReasoning) {
+    return String(result.verdictReasoning);
+  }
+  return text.noReasoning;
+}
+
+function buildLocalizedRecommendation(result, lang) {
+  const text = getText(lang);
+  const verdict = String(result.verdict || "").toLowerCase();
+  if (verdict === "dangerous / do not open") {
+    if (lang === LANG_HE) {
+      return "אל תפתחי את המייל, אל תלחצי על קישורים ואל תפתחי או תורידי קבצים מצורפים.";
+    }
+    if (lang === LANG_ES) {
+      return "No abras este correo, no hagas clic en enlaces y no abras ni descargues archivos adjuntos.";
+    }
+    return "Do not open this email, click links, or download/open attached files.";
+  }
+  if (verdict === "suspicious") {
+    if (lang === LANG_HE) {
+      return "אל תלחצי על קישורים או קבצים עד שתאמת/י את השולח דרך ערוץ מהימן.";
+    }
+    if (lang === LANG_ES) {
+      return "Evita abrir enlaces o adjuntos hasta verificar al remitente por un canal confiable.";
+    }
+    return "Avoid links and attachments until you verify the sender through a trusted channel.";
+  }
+  if (verdict === "safe") {
+    if (lang === LANG_HE) {
+      return "אפשר להמשיך בזהירות, תוך שמירה על היגיינת אבטחה בסיסית במייל.";
+    }
+    if (lang === LANG_ES) {
+      return "Puedes continuar con cuidado y mantener buenas practicas basicas de seguridad por correo.";
+    }
+    return "Proceed carefully while maintaining standard email security hygiene.";
+  }
+  return result.recommendation || text.noRecommendation;
+}
+
 function getRiskMeta(verdict, lang) {
   const text = getText(lang);
   const normalized = String(verdict || "").toLowerCase();
-  if (normalized === "high risk") {
+  if (normalized === "dangerous / do not open") {
     return {
-      label: text.highRisk,
-      bannerTitle: text.highRiskBanner
+      label: text.dangerous,
+      bannerTitle: text.dangerousBanner
     };
   }
 

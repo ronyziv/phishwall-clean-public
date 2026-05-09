@@ -1,0 +1,35 @@
+{
+  "bec_finance_terms": [
+    "wire transfer",
+    "bank transfer",
+    "invoice",
+    "payment",
+    "remittance",
+    "gift card",
+    "vendor",
+    "beneficiary",
+    "finance team",
+    "swift",
+    "חשבונית",
+    "תשלום",
+    "העברה בנקאית",
+    "שובר מתנה",
+    "ספק"
+  ],
+  "bec_pressure_terms": [
+    "urgent",
+    "asap",
+    "immediately",
+    "confidential",
+    "do not call",
+    "reply only",
+    "today",
+    "before end of day",
+    "high priority",
+    "דחוף",
+    "מיידי",
+    "סודי",
+    "אל תתקשר",
+    "עוד היום"
+  ]
+}

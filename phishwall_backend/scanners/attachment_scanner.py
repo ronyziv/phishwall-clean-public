@@ -8,6 +8,10 @@ EXECUTABLE_EXTENSIONS = {
     ".vbe", ".wsf", ".wsh", ".scr", ".com", ".pif", ".jar", ".hta"
 }
 
+RISKY_CONTAINER_EXTENSIONS = {
+    ".zip", ".rar", ".7z", ".iso", ".img", ".cab", ".ace",
+}
+
 EXECUTABLE_MIME_HINTS = (
     "application/x-msdownload",
     "application/x-msdos-program",
@@ -19,6 +23,11 @@ EXECUTABLE_MIME_HINTS = (
 )
 
 URL_PATTERN = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
+DOUBLE_EXTENSION_PATTERN = re.compile(
+    r"\.(pdf|doc|docx|xls|xlsx|ppt|pptx|txt|jpg|jpeg|png)\.(exe|scr|js|jse|vbs|vbe|cmd|bat|ps1)$",
+    re.IGNORECASE,
+)
+HIDDEN_EXTENSION_TRAIL_PATTERN = re.compile(r"\.(exe|scr|js|vbs|cmd|bat|ps1)\s+[A-Za-z0-9]+$", re.IGNORECASE)
 
 
 def _is_pdf(filename, mime_type):
@@ -32,6 +41,25 @@ def _is_executable(filename, mime_type):
     mime = (mime_type or "").lower()
     ext = os.path.splitext(name)[1]
     return ext in EXECUTABLE_EXTENSIONS or any(hint in mime for hint in EXECUTABLE_MIME_HINTS)
+
+
+def _is_risky_container(filename, mime_type):
+    name = (filename or "").lower()
+    mime = (mime_type or "").lower()
+    ext = os.path.splitext(name)[1]
+    return ext in RISKY_CONTAINER_EXTENSIONS or "compressed" in mime or "zip" in mime or "archive" in mime
+
+
+def _is_disguised_filename(filename):
+    name = str(filename or "").strip()
+    normalized = name.lower()
+    if "\u202e" in name:
+        return True
+    if DOUBLE_EXTENSION_PATTERN.search(normalized):
+        return True
+    if HIDDEN_EXTENSION_TRAIL_PATTERN.search(normalized):
+        return True
+    return False
 
 
 def _extract_pdf_links(content_base64):
@@ -81,10 +109,19 @@ def scan_attachments(attachments):
         mime_type = str(attachment.get("mimeType", ""))
         content_base64 = attachment.get("contentBase64", "")
 
+        if _is_disguised_filename(filename):
+            risk_penalty += 35
+            findings.append(f"Disguised attachment filename pattern detected: {filename}")
+
         if _is_executable(filename, mime_type):
             executable_count += 1
             risk_penalty += 60
             findings.append(f"Executable attachment detected: {filename}")
+            continue
+
+        if _is_risky_container(filename, mime_type):
+            risk_penalty += 12
+            findings.append(f"Risky archive/container attachment detected: {filename}")
             continue
 
         if _is_pdf(filename, mime_type):

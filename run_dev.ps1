@@ -1,7 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-$ConfiguredProjectDir = "C:\Users\ronyz\OneDrive\Desktop\phishwall_backend"
-$FallbackProjectDir = "C:\Users\ronyz\OneDrive\Desktop\phishwall\phishwall_backend"
+$ConfiguredProjectDir = "C:\Users\ronyz\OneDrive\Desktop\phishwall_public_\phishwall_backend"
 $NgrokExe = "C:\Program Files\WindowsApps\ngrok.ngrok_3.39.1.0_x64__1g87z0zv29zzc\ngrok.exe"
 $NgrokDomain = "dispense-why-glamour.ngrok-free.dev"
 $Port = 8000
@@ -9,11 +8,8 @@ $DelaySeconds = 3
 
 if (Test-Path -LiteralPath $ConfiguredProjectDir) {
     $ProjectDir = $ConfiguredProjectDir
-} elseif (Test-Path -LiteralPath $FallbackProjectDir) {
-    $ProjectDir = $FallbackProjectDir
-    Write-Host "Configured project path not found. Using fallback: $ProjectDir"
 } else {
-    Write-Error "Project directory not found. Checked:`n- $ConfiguredProjectDir`n- $FallbackProjectDir"
+    Write-Error "Project directory not found: $ConfiguredProjectDir"
     exit 1
 }
 

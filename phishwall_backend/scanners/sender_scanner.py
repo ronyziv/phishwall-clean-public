@@ -4,7 +4,11 @@ import re
 from urllib import parse, request
 
 from scanners.ipqs_email_client import lookup_email
-from scanners.lookalike_domain_scanner import analyze_lookalike_domain
+from scanners.lookalike_domain_scanner import (
+    analyze_lookalike_domain,
+    host_matches_brand,
+    infer_brand_from_text,
+)
 
 
 EMAIL_PATTERN = re.compile(r"([A-Z0-9._%+\-]+)@([A-Z0-9.\-]+\.[A-Z]{2,})", re.IGNORECASE)
@@ -33,6 +37,17 @@ def _domain_from_email(email_value):
     if "@" not in str(email_value):
         return ""
     return str(email_value).rsplit("@", 1)[-1].strip().lower()
+
+
+def _extract_display_name(sender_value):
+    text = str(sender_value or "").strip()
+    if not text:
+        return ""
+    if "<" in text:
+        return text.split("<", 1)[0].strip().strip("\"'")
+    if "@" in text:
+        return ""
+    return text
 
 
 def _virustotal_domain_lookup(domain):
@@ -199,13 +214,14 @@ def _scan_email_reputation(email_value):
     return combined_penalty, ipqs_flagged, findings
 
 
-def scan_sender(sender_value, email_candidates=None):
+def scan_sender(sender_value, email_candidates=None, context_text=""):
     findings = []
     risk_penalty = 0
     ipqs_flagged = 0
     vt_flagged = 0
 
     sender_email, sender_domain = _extract_sender_email(sender_value)
+    display_name = _extract_display_name(sender_value)
     if not sender_email:
         return {
             "senderEmail": "",
@@ -226,6 +242,20 @@ def scan_sender(sender_value, email_candidates=None):
     if sender_domain.startswith("xn--"):
         risk_penalty += 8
         findings.append(f"Sender uses punycode domain: {sender_domain}")
+
+    brand_from_display = infer_brand_from_text(display_name)
+    if brand_from_display and not host_matches_brand(sender_domain, brand_from_display):
+        risk_penalty += 18
+        findings.append(
+            f"Display name references '{brand_from_display}' but sender domain '{sender_domain}' does not match known domains."
+        )
+
+    brand_from_context = infer_brand_from_text(context_text)
+    if brand_from_context and not host_matches_brand(sender_domain, brand_from_context):
+        risk_penalty += 8
+        findings.append(
+            f"Email content references '{brand_from_context}' while sender domain is '{sender_domain}'."
+        )
 
     for email_value in all_emails:
         combined_penalty, email_ipqs_flagged, email_findings = _scan_email_reputation(email_value)

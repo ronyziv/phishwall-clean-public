@@ -76,6 +76,16 @@ generic|3|open attachment
 generic|3|confirm
 generic|3|update your details
 generic|3|download now
+generic|2|download
+generic|2|open
+generic|3|run
+generic|3|install
+generic|2|enable
+generic|2|update
+generic|4|urgent download
+generic|3|open file
+generic|3|run attached
+generic|3|install update
 generic|3|view document
 generic|3|secure message
 generic|3|לחץ כאן

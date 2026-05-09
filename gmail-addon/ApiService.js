@@ -28,6 +28,8 @@ function normalizeBackendResult(result) {
       maliciousScore: 0,
       verdict: "Unknown",
       icon: "⚪",
+      verdictReasoning: "",
+      recommendation: "",
       comments: [],
       riskIndicators: [],
       infoFindings: ["No valid response returned from backend."],
@@ -42,6 +44,8 @@ function normalizeBackendResult(result) {
     maliciousScore: score,
     verdict: result.verdict || "Unknown",
     icon: result.icon || "⚪",
+      verdictReasoning: result.verdictReasoning || "",
+      recommendation: result.recommendation || "",
     comments: getArrayData(result.comments),
     riskIndicators: Array.isArray(result.riskIndicators)
       ? result.riskIndicators

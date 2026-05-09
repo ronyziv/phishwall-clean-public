@@ -29,7 +29,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.json()
 
-        for key in ["score", "maliciousScore", "verdict", "scoreBreakdown", "riskIndicators", "infoFindings"]:
+        for key in ["score", "maliciousScore", "verdict", "scoreBreakdown", "riskIndicators", "infoFindings", "qrSummary"]:
             self.assertIn(key, data)
 
     def test_scan_endpoint_validation_error(self):
@@ -44,6 +44,18 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
         body = response.json()
         self.assertEqual(body.get("error"), "Validation error")
+
+    def test_scan_endpoint_ignores_untrusted_extra_fields(self):
+        payload = {
+            "subject": "Monthly digest",
+            "from": "digest@example.com",
+            "body": "hello",
+            "attachments": [],
+            "__proto__": {"x": 1},
+            "unexpected_field": "ignored",
+        }
+        response = self.client.post("/scan", json=payload)
+        self.assertEqual(response.status_code, 200)
 
 
 if __name__ == "__main__":

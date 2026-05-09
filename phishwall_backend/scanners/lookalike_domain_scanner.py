@@ -1,106 +1,46 @@
-"""
-Look-alike detection is based on domain labels (the part before TLD).
+import json
+from pathlib import Path
 
-Data model:
-- BRANDS: tuple of (display_name, labels_tuple)
-- LABEL_TO_BRAND: flattened dict for fast label -> brand lookup and clean findings text.
-"""
+DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "impersonation_targets.json"
 
-BRANDS = (
-    # Banks and financial institutions - Israel
-    ("Bank Hapoalim", ("hapoalim", "poalim", "bankhapoalim")),
-    ("Bank Leumi", ("leumi", "bankleumi")),
-    ("Discount Bank", ("discount", "discountbank")),
-    ("Mizrahi Tefahot", ("mizrahi", "tefahot", "mizrahi-tefahot", "mizrahi-tefahotbank")),
-    ("First International Bank", ("fibi", "beinleumi", "internationalbank")),
-    ("Mercantile Discount", ("mercantile", "mercantilediscount")),
-    ("Bank Yahav", ("yahav", "bankyahav")),
-    ("Bank Massad", ("massad", "bankmassad")),
-    ("Isracard", ("isracard",)),
-    ("MAX", ("max", "max-il", "maxfinance")),
-    ("CAL", ("cal", "icc", "israelcreditcards")),
-    ("Bit", ("bit", "bitpay")),
-    ("PayBox", ("paybox",)),
-    ("Pepper", ("pepper", "pepperbank")),
-    # Utilities and telecom - Israel
-    ("IEC", ("iec", "israelelectric", "electric", "electricity")),
-    ("Mekorot", ("mekorot",)),
-    ("Cellcom", ("cellcom",)),
-    ("Partner", ("partner", "partneril", "orangetv")),
-    ("Pelephone", ("pelephone",)),
-    ("Bezeq", ("bezeq", "bezek", "bezeqint", "bezeqintl")),
-    ("HOT", ("hot", "hotnet")),
-    ("yes", ("yes", "yesco")),
-    ("019 Mobile", ("019", "xfone", "xphone")),
-    # Government and public service style - Israel
-    ("Gov.il", ("gov", "govil", "gov-il", "mygov", "mygovil")),
-    ("National Insurance Institute", ("btl", "bituachleumi", "nii", "nationalinsurance")),
-    ("Israel Tax Authority", ("taxes", "tax", "mash", "rsm", "taxauthority")),
-    ("Population and Immigration Authority", ("piba", "immigration", "populationauthority")),
-    ("Israel Post", ("israelpost", "postil", "doar", "doarisrael")),
-    ("Police", ("police", "israelpolice")),
-    # Shipping / logistics and commerce - Israel
-    ("HFD", ("hfd", "hfdelivery")),
-    ("E-Post", ("epost",)),
-    ("Wolt", ("wolt",)),
-    ("Gett", ("gett", "gettaxi")),
-    # Big tech / consumer internet - global & US
-    ("Google", ("google", "gmail", "googlemail", "youtube", "googlepay", "gpay")),
-    ("Microsoft", ("microsoft", "outlook", "hotmail", "live", "office", "office365")),
-    ("Apple", ("apple", "icloud", "itunes", "appleid")),
-    ("Amazon", ("amazon", "aws", "primevideo", "kindle")),
-    ("Meta", ("facebook", "instagram", "whatsapp", "meta", "messenger")),
-    ("LinkedIn", ("linkedin",)),
-    ("X", ("x", "twitter")),
-    ("TikTok", ("tiktok",)),
-    ("Netflix", ("netflix",)),
-    ("Dropbox", ("dropbox",)),
-    ("Adobe", ("adobe",)),
-    ("Zoom", ("zoom",)),
-    ("Slack", ("slack",)),
-    ("GitHub", ("github",)),
-    ("OpenAI", ("openai", "chatgpt")),
-    # Payments / fintech - US/global
-    ("PayPal", ("paypal",)),
-    ("Venmo", ("venmo",)),
-    ("Cash App", ("cashapp",)),
-    ("Stripe", ("stripe",)),
-    ("Wise", ("wise", "transferwise")),
-    ("Western Union", ("westernunion", "wu")),
-    # US banks and cards
-    ("Bank of America", ("bankofamerica", "bofa")),
-    ("Chase", ("chase", "jpmorgan")),
-    ("Wells Fargo", ("wellsfargo",)),
-    ("Citibank", ("citi", "citibank")),
-    ("Capital One", ("capitalone",)),
-    ("American Express", ("amex", "americanexpress")),
-    ("US Bank", ("usbank",)),
-    ("PNC", ("pnc",)),
-    ("Truist", ("truist",)),
-    # US utilities / telecom / cable
-    ("AT&T", ("att",)),
-    ("Verizon", ("verizon",)),
-    ("T-Mobile", ("tmobile",)),
-    ("Comcast", ("comcast", "xfinity")),
-    ("Spectrum", ("spectrum",)),
-    ("Cox", ("cox", "coxcommunications")),
-    # US government/public service style
-    ("IRS", ("irs",)),
-    ("Social Security", ("ssa", "socialsecurity")),
-    ("USPS", ("usps", "postalservice")),
-    ("DMV", ("dmv",)),
-    ("Medicare", ("medicare",)),
-    # Shipping / logistics - US/global
-    ("FedEx", ("fedex",)),
-    ("UPS", ("ups",)),
-    ("DHL", ("dhl",)),
-    ("USPS Tracking", ("uspstracking", "trackusps")),
-)
+
+def _load_targets():
+    try:
+        with open(DATA_PATH, "r", encoding="utf-8") as f:
+            rows = json.load(f)
+    except Exception:
+        rows = []
+
+    brands = []
+    label_to_brand = {}
+    brand_domains = {}
+    for row in rows:
+        name = str(row.get("name", "")).strip()
+        labels = tuple(
+            str(label).strip().lower()
+            for label in row.get("labels", [])
+            if str(label).strip()
+        )
+        domains = tuple(
+            str(domain).strip().lower()
+            for domain in row.get("domains", [])
+            if str(domain).strip()
+        )
+        if not name or not labels:
+            continue
+        brands.append((name, labels))
+        for label in labels:
+            label_to_brand[label.replace("-", "")] = name
+        if domains:
+            brand_domains[name] = domains
+    return tuple(brands), label_to_brand, brand_domains
+
+
+BRANDS, LABEL_TO_BRAND, BRAND_PRIMARY_DOMAINS = _load_targets()
 
 LABEL_TO_BRAND = {
-    label.replace("-", ""): brand_name
-    for brand_name, labels in BRANDS
-    for label in labels
+    key.replace("-", ""): value
+    for key, value in LABEL_TO_BRAND.items()
 }
 COMMON_BRANDS = set(LABEL_TO_BRAND.keys())
 
@@ -125,6 +65,40 @@ def _domain_label(domain):
     if len(parts) < 2:
         return ""
     return parts[-2].replace("-", "")
+
+
+def normalize_host(domain):
+    host = str(domain or "").strip().lower().split(":")[0]
+    if host.startswith("www."):
+        host = host[4:]
+    return host
+
+
+def infer_brand_from_text(text):
+    normalized = str(text or "").lower().replace("-", "").replace("_", "")
+    if not normalized:
+        return None
+
+    for label, brand_name in LABEL_TO_BRAND.items():
+        if label and label in normalized:
+            return brand_name
+    return None
+
+
+def host_matches_brand(host, brand_name):
+    normalized_host = normalize_host(host)
+    if not normalized_host or not brand_name:
+        return False
+
+    allowed_domains = BRAND_PRIMARY_DOMAINS.get(brand_name, ())
+    for allowed in allowed_domains:
+        allowed = normalize_host(allowed)
+        if normalized_host == allowed or normalized_host.endswith("." + allowed):
+            return True
+
+    expected_labels = {label for label, mapped_brand in LABEL_TO_BRAND.items() if mapped_brand == brand_name}
+    label = _domain_label(normalized_host)
+    return bool(label and label in expected_labels)
 
 
 def _normalize_substitutions(text):

@@ -19,6 +19,10 @@ SHORTENERS = {
 
 REQUEST_TIMEOUT_SECONDS = 3
 REMOTE_LOOKUP_LIMIT = 5
+SUSPICIOUS_URL_TERMS = ("download", "install", "update", "setup", "patch", "enable")
+SUSPICIOUS_DOWNLOAD_EXTENSIONS = (
+    ".exe", ".msi", ".bat", ".cmd", ".ps1", ".js", ".jar", ".scr", ".hta", ".vbs", ".zip", ".iso"
+)
 
 
 def _read_json_response(resp):
@@ -191,6 +195,15 @@ def scan_urls(urls):
         if "@" in url:
             risk_penalty += 20
             findings.append(f"URL contains '@': {url}")
+
+        lowered_url = url.lower()
+        if any(term in lowered_url for term in SUSPICIOUS_URL_TERMS):
+            risk_penalty += 6
+            findings.append(f"URL contains delivery-related keyword: {host}")
+
+        if any(lowered_url.endswith(ext) for ext in SUSPICIOUS_DOWNLOAD_EXTENSIONS):
+            risk_penalty += 14
+            findings.append(f"URL points to potentially dangerous downloadable file: {url}")
 
         if len(url) > 150:
             # Long URL alone is a weak signal; cap its total effect.

@@ -4,29 +4,29 @@ from pydantic import BaseModel, Field
 
 
 class AttachmentInput(BaseModel):
-    filename: str = ""
-    mimeType: str = ""
-    contentBase64: str = ""
+    filename: str = Field(default="", max_length=260)
+    mimeType: str = Field(default="", max_length=120)
+    contentBase64: str = Field(default="", max_length=2_000_000)
 
 
 class ScanRequest(BaseModel):
-    subject: str = ""
-    from_: str = Field(default="", alias="from")
-    to: List[str] = Field(default_factory=list)
-    cc: List[str] = Field(default_factory=list)
-    bcc: List[str] = Field(default_factory=list)
-    reply_to: str = ""
-    body: str = ""
-    body_snippet: str = ""
-    date: str = ""
-    sent_at: str = ""
-    timestamp: str = ""
-    urls: List[str] = Field(default_factory=list)
-    attachments: List[AttachmentInput] = Field(default_factory=list)
+    subject: str = Field(default="", max_length=300)
+    from_: str = Field(default="", alias="from", max_length=320)
+    to: List[str] = Field(default_factory=list, max_length=200)
+    cc: List[str] = Field(default_factory=list, max_length=200)
+    bcc: List[str] = Field(default_factory=list, max_length=200)
+    reply_to: str = Field(default="", max_length=320)
+    body: str = Field(default="", max_length=200_000)
+    body_snippet: str = Field(default="", max_length=5_000)
+    date: str = Field(default="", max_length=100)
+    sent_at: str = Field(default="", max_length=100)
+    timestamp: str = Field(default="", max_length=100)
+    urls: List[str] = Field(default_factory=list, max_length=300)
+    attachments: List[AttachmentInput] = Field(default_factory=list, max_length=100)
 
     model_config = {
         "populate_by_name": True,
-        "extra": "allow",
+        "extra": "ignore",
     }
 
 
@@ -70,6 +70,8 @@ class ScoreBreakdown(BaseModel):
     language: int
     sender: int
     time: int
+    qr: int
+    priorityThreats: int
     linkBase: int
     urlRaw: int
     urlApplied: int
@@ -83,17 +85,22 @@ class ScanResponse(BaseModel):
     verdict: str
     color: str
     icon: str
+    verdictReasoning: str
+    recommendation: str
     links: int
     riskWords: int
     comments: List[str]
     riskIndicators: List[str]
     infoFindings: List[str]
+    reasons: List[str]
     scoreBreakdown: ScoreBreakdown
     attachmentSummary: AttachmentSummary
     urlSummary: UrlSummary
     senderSummary: SenderSummary
     languageSummary: LanguageSummary
     timeSummary: TimeSummary
+    qrSummary: dict
+    priorityThreatSummary: dict
 
 
 class HealthResponse(BaseModel):

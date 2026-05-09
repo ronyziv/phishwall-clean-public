@@ -1,8 +1,8 @@
 import logging
 import os
+from pathlib import Path
 from typing import Any, Dict
 
-from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -11,18 +11,41 @@ from models import ErrorResponse, HealthResponse, ScanRequest, ScanResponse
 from services.scan_service import analyze_email
 
 
+def _load_local_env_file(env_path: Path) -> None:
+    if not env_path.exists():
+        return
+
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        key = ""
+        value = ""
+        if "=" in line:
+            key, value = line.split("=", 1)
+        else:
+            # Graceful fallback for accidental "KEY value" formatting.
+            parts = line.split(None, 1)
+            if len(parts) == 2:
+                key, value = parts
+            else:
+                continue
+
+        key = key.strip()
+        value = value.strip().strip("\"'").strip()
+        if key:
+            os.environ.setdefault(key, value)
+
+
 def _configure_runtime():
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    if load_dotenv is None:
-        logging.warning("python-dotenv is not installed; .env autoload disabled.")
-    else:
-        # Primary environment file for runtime secrets.
-        load_dotenv(dotenv_path=".env", override=False)
-        # Backward-compatible fallback file name if teams still use it locally.
-        load_dotenv(dotenv_path="IPQS_API.env", override=False)
+    # Load secrets from backend-local .env regardless of current working directory.
+    backend_dir = Path(__file__).resolve().parent
+    _load_local_env_file(backend_dir / ".env")
     logging.info("Startup: IPQS_API_KEY loaded=%s", bool(os.environ.get("IPQS_API_KEY", "").strip()))
 
 
@@ -50,7 +73,7 @@ async def generic_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content=ErrorResponse(
             error="Backend error",
-            details=str(exc),
+            details="Internal server error",
         ).model_dump(),
     )
 
