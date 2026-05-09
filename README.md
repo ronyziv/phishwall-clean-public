@@ -1,8 +1,8 @@
 # PhishWall
 
-PhishWall is a **Gmail add-on** (Google Apps Script) backed by a **FastAPI** service. It analyzes the open message, sends structured content to **`POST /scan`**, and returns a safety score (**`0–100`**, higher is safer), a **verdict** (`Safe` / `Suspicious` / `Dangerous / Do Not Open`), and detailed findings (`riskIndicators`, `infoFindings`, `scoreBreakdown`).
+PhishWall is a **Gmail add-on** (Google Apps Script) backed by a **FastAPI** service. It analyzes the open message, calls **`POST /scan`**, and—**in English, Spanish, or Hebrew**—presents a **Maliciousness Score** on **0–100** where **higher = more malicious** (as in the screenshots and `UiService.js`), together with **Verdict** (`Safe` / `Suspicious` / `Dangerous / Do Not Open`), **Risk Level** (aligned with the verdict band), reasoning, **Risk Indicators**, **Additional Context** (`infoFindings`), and **Score Breakdown**.
 
-The API exposes both **`score`** (`100 − totalPenalty`) and **`maliciousScore`** (`100 − score`). The card UI emphasizes **`maliciousScore`** under a localized maliciousness-style label plus verdict and risk level, so the headline number rises with suspicion (`UiService.js`).
+The JSON response includes both **`score`** (internal pipeline output: **100 − totalPenalty**, clamped) and **`maliciousScore`** (**100 − score**). Only **`maliciousScore`** is shown as the headline **“…/100”** in the summary card; **`score`** is available for integrations but is not what end users read as the main gauge.
 
 ---
 
@@ -10,23 +10,24 @@ The API exposes both **`score`** (`100 − totalPenalty`) and **`maliciousScore`
 
 - Runs in Gmail on a selected message; extracts headers, body, URLs, and attachments (**including inline images**) via `EmailService.js`.
 - Calls the backend **`/scan`** with that payload (`ApiService.js`).
-- Renders cards with summary, verdict, breakdown, and tips; **English, Spanish, and Hebrew** are available from an in-card language switcher.
+- Renders **CardService** UI: prominent **Maliciousness Score**, **Verdict**, **Risk Level**, breakdown panels, localized tips—the language is chosen via the in-card switcher (see screenshots below).
 
 ---
 
 ## UI examples
 
-<p align="center">
-  <b>English</b>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-  <b>Español</b>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-  <b>Hebrew</b>
-</p>
-
-<p align="center">
-  <img src="add_on_EN.png" alt="PhishWall UI - English" width="250"/>
-  <img src="add_on_es.png" alt="PhishWall UI - Spanish" width="250"/>
-  <img src="add_on_img.png" alt="PhishWall UI - Hebrew" width="250"/>
-</p>
+<table align="center">
+  <tr>
+    <td align="center"><b>English</b></td>
+    <td align="center"><b>Español</b></td>
+    <td align="center"><b>Hebrew</b></td>
+  </tr>
+  <tr>
+    <td><img src="add_on_EN.png" alt="PhishWall UI - English" width="250" height="540"/></td>
+    <td><img src="add_on_es.png" alt="PhishWall UI - Spanish" width="250" height="540"/></td>
+    <td><img src="add_on_img.png" alt="PhishWall UI - Hebrew" width="250" height="540"/></td>
+  </tr>
+</table>
 
 ---
 
@@ -149,7 +150,7 @@ phishwall_public_/
 
 ## Scoring and verdict
 
-**Total penalty** (`scanner_pipeline.py`) sums: **`keywords`**, **`language`**, **`sender`**, **`time`**, **`qr`**, **`priorityThreats`**, **`linkBase`**, **`urlApplied`**, **`attachments`**. Then **`score = clamp(100 − totalPenalty)`** (`scan_service.py`). **`urlRaw`** is reported for transparency but **not** added into the total—only **`urlApplied`**.
+**Total penalty** (`scanner_pipeline.py`) sums: **`keywords`**, **`language`**, **`sender`**, **`time`**, **`qr`**, **`priorityThreats`**, **`linkBase`**, **`urlApplied`**, **`attachments`**. Then **`score = clamp(100 − totalPenalty)`** (`scan_service.py`). The response’s **`maliciousScore`** (**`100 − score`**) drives the **Maliciousness Score** line in Gmail. **`urlRaw`** is reported for transparency but **not** added into the total—only **`urlApplied`**.
 
 **Relative weight (scan quickly):**
 
