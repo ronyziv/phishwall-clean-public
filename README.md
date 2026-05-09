@@ -2,8 +2,6 @@
 
 PhishWall is a **Gmail add-on** (Google Apps Script) backed by a **FastAPI** service. It analyzes the open message, calls **`POST /scan`**, and—**in English, Spanish, or Hebrew**—presents a **Maliciousness Score** on **0–100** where **higher = more malicious** (as in the screenshots and `UiService.js`), together with **Verdict** (`Safe` / `Suspicious` / `Dangerous / Do Not Open`), **Risk Level** (aligned with the verdict band), reasoning, **Risk Indicators**, **Additional Context** (`infoFindings`), and **Score Breakdown**.
 
-The JSON response includes both **`score`** (internal pipeline output: **100 − totalPenalty**, clamped) and **`maliciousScore`** (**100 − score**). Only **`maliciousScore`** is shown as the headline **“…/100”** in the summary card; **`score`** is available for integrations but is not what end users read as the main gauge.
-
 ---
 
 ## What it does
@@ -33,22 +31,25 @@ The JSON response includes both **`score`** (internal pipeline output: **100 −
 
 ## Threat focus (design rationale)
 
-### Frequency, relevance, and priority (public reporting)
+I reviewed recent public reporting to decide what PhishWall should emphasize. The consistent theme is that **phishing remains central**, with heightened attention to **QR-based delivery** and **BEC-style** abuse. The implementation therefore foregrounds those patterns alongside **sender impersonation**, **suspicious URLs**, and **dangerous attachments**.
 
-**Israel (2025).** In its [annual report](https://www.gov.il/en/pages/2025report), Israel’s **National Cyber Directorate** states that reported cyber incidents rose by about **55%** and that **phishing** remained the dominant vector, accounting for **52%** of reported cases.
+Sources: [Israel National Cyber Directorate annual report](https://www.gov.il/en/pages/2025report), [Microsoft Threat Intelligence – Email threat landscape Q1 2026](https://www.microsoft.com/en-us/security/blog/2026/04/30/email-threat-landscape-q1-2026-trends-and-insights/).
 
-**Global (Q1 2026).** Microsoft Threat Intelligence’s [email threat landscape — Q1 2026](https://www.microsoft.com/en-us/security/blog/2026/04/30/email-threat-landscape-q1-2026-trends-and-insights/) report frames **credential phishing** (including link-heavy delivery), **QR code phishing** (noting it as the fastest-growing vector that quarter, with volumes more than doubling), and prevalent **business email compromise (BEC)** as defining themes alongside ongoing payload experimentation.
+**From categories to the Maliciousness Score.** Scoring is **additive and rule-based**: each scanner adds non-negative **penalties** into named buckets (`scoreBreakdown`). The pipeline **sums** selected buckets into **`totalPenalty`** (`services/scanner_pipeline.py`), then `scan_service.py` sets **`score = clamp(100 − totalPenalty)`** and **`maliciousScore = 100 − score`**. So anything that increases penalties **increases** the user-facing **Maliciousness Score**. There is no learned model—only the **fixed integers** defined in each scanner (plus the explicit **0.7** multiplier on URL penalties before they enter the sum). **Verdict** is a separate layer: `verdict_engine.py` applies threshold and “strong indicator” rules on top of `maliciousScore` (detailed under [Scoring and verdict](#scoring-and-verdict)).
 
-**Synthesis.** Independent public reporting places **phishing** at the center of real-world incident mix (Israel) and defender telemetry (Microsoft), with **QR-assisted** flows and **BEC** attracting particular attention in Microsoft’s Q1 2026 analysis. That ordering motivated PhishWall’s feature set: **QR** decoding and linked-resource handling, **BEC/priority-threat** gates, **sender/brand impersonation** signals, plus **URL/attachment** hygiene and optional reputation—implemented as transparent **heuristics**, not as a substitute for full mail-security stacks.
+The table ties **research priorities** to **what runs in code**, how it contributes to **`totalPenalty`**, and how strong that contribution tends to be (based on caps and dampening already in code—not a subjective ranking).
 
-PhishWall encodes those priorities in code:
+| Priority | What the code evaluates | Implemented in | Influence on **`maliciousScore`** |
+|----------|---------------------------|----------------|-------------------------------------|
+| **QR / “quishing”** | Finds QR payloads in images (attachment/inline **`contentBase64`**); optionally follows QR-looking links, fetches a small amount of content, tries decode | `scanners/qr_scanner.py`, `QrScannerAdapter` in `services/scanner_pipeline.py` | Adds bucket **`qr`**. Effect is **meaningful but bounded**: totals are capped **per attachment path** and **per linked-fetch path**, then combined, so repeats do not explode the score. Decoded payloads also strengthen **verdict** logic when URLs appear. |
+| **BEC / priority framing** | Financial/pressure language in subject/body, combined with spoofing/context hints from earlier pipeline state | `data/priority_threat_keywords.json`, `PriorityThreatScannerAdapter` | Adds bucket **`priorityThreats`** (**`+16`** when several BEC-aligned signals agree, **`+5`** for a single weak signal). **Medium uplift** relative to headline attachment/sender spikes. Also feeds BEC-related **verdict** flags. |
+| **Sender & brand trust** | Display-name vs domain, brand references vs actual host, punycode domains, local look-alike heuristics, optional IPQS/VirusTotal | `sender_scanner.py`, `lookalike_domain_scanner.py`, `data/impersonation_targets.json`, `ipqs_email_client.py` | Adds bucket **`sender`**. Often **among the heavier numeric buckets** when reputation APIs fire or spoofing cues stack (fixed per-rule integers; VT/IPQS deltas composed with explicit **`0.7` / `0.6`** weighting inside `sender_scanner.py`). |
+| **Links & URL reputation** | URL shape issues (shorteners, punycode, suspicious TLD hints, malformed patterns, etc.); optional IPQS + Safe Browsing | `url_scanner.py` | Fills **`urlRaw`** / **`urlApplied`**. **Only `urlApplied` (= `⌊urlRaw × 0.7⌋`) enters `totalPenalty`**, so URLs can register large raw totals but contribute **less** than their face value toward the summed score—a deliberate trade-off vs. spoofing/files. |
+| **Attachments & payloads** | Executables/double-extensions/RTL tricks, risky archives, PDFs with extracted URLs inside the file | `attachment_scanner.py` | Adds bucket **`attachments`**. **Single findings can dominate** (e.g. executable **`+60`**, disguised filename **`+35`**) relative to lighter buckets. Executable/disguised patterns also act as **verdict strong indicators**. |
+| **Coercion language & text quality** | Phishing lexicon with per-term weights + combination escalation; simple “low-quality template” heuristics (mixed scripts, punctuation, fragments) | `keyword_scanner.py` + `data/risk_keywords.txt`, `language_scanner.py` | Adds buckets **`keywords`** (hard cap **40**) and **`language`** (cap **15**). **Medium / supporting**: raises pressure without letting language alone swamp structural signals. Keyword penalty magnitude also gates some **verdict** urgency checks. |
+| **Context nudges** | Unusual send time only when body already looks BEC/ATO-like; small extra cost when many links are present | `time_scanner.py`, `LinkBaseScannerAdapter` | Adds **`time`** (at most **2** in those contexts) and **`linkBase`** (cap **3**). **Supporting only**—confirms suspicious narratives rather than driving the score alone. |
 
-| Theme | Implementation (high level) |
-|--------|-----------------------------|
-| **QR / quishing** | Decode QR from images (`contentBase64`); heuristically fetch and decode QR-linked URLs with strict limits (`scanners/qr_scanner.py`, `QrScannerAdapter` in `services/scanner_pipeline.py`). |
-| **BEC / impersonation pressure** | Finance/urgency terms + sender/wording gates (`data/priority_threat_keywords.json`, `PriorityThreatScannerAdapter`). |
-| **Spoofing & brands** | Look-alikes, display-name vs domain, punycode (`data/impersonation_targets.json`, `lookalike_domain_scanner.py`, `sender_scanner.py`). |
-| **Traditional phishing vectors** | URL hygiene + optional reputation; attachment typing, PDF link extraction, executables/archives (`url_scanner.py`, `attachment_scanner.py`). |
+**Takeaway for reviewers:** PhishWall does **not** ship a separate weighting matrix beyond the per-rule integers, the **URL × 0.7** dampener, and the **QR/keyword/language caps** above. What feels “prioritized” in the product sense (QR, BEC, impersonation) shows up as **dedicated pipeline stages**, **larger typical penalty spikes** for certain attachment/sender findings, and **additional verdict rules**—not as a second hidden scoring engine.
 
 ---
 
