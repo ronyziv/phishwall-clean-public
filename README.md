@@ -1,17 +1,59 @@
 # PhishWall
 
-Gmail Add-on + FastAPI backend that scores email safety (`0..100`) with verdicts (`Safe`, `Suspicious`, `Dangerous / Do Not Open`) and structured findings (`riskIndicators`, `infoFindings`, `scoreBreakdown`). Combines phishing-adjacent signals: spoofing, suspicious URLs/attachments, QR, and BEC-style patterns.
+PhishWall is a **Gmail add-on** (Google Apps Script) backed by a **FastAPI** service. It analyzes the open message, sends structured content to **`POST /scan`**, and returns a safety score (**`0–100`**, higher is safer), a **verdict** (`Safe` / `Suspicious` / `Dangerous / Do Not Open`), and detailed findings (`riskIndicators`, `infoFindings`, `scoreBreakdown`).
+
+The API exposes both **`score`** (`100 − totalPenalty`) and **`maliciousScore`** (`100 − score`). The card UI emphasizes **`maliciousScore`** under a localized maliciousness-style label plus verdict and risk level, so the headline number rises with suspicion (`UiService.js`).
 
 ---
 
-## What It Does
+## What it does
 
-- Opens on a message → extracts fields + URLs + attachments (including **inline images**) → `POST /scan`.
-- Returns score, verdict, reasoning, recommendation, and scanner summaries. Local heuristics always run; external reputation is optional (see below).
+- Runs in Gmail on a selected message; extracts headers, body, URLs, and attachments (**including inline images**) via `EmailService.js`.
+- Calls the backend **`/scan`** with that payload (`ApiService.js`).
+- Renders cards with summary, verdict, breakdown, and tips; **English, Spanish, and Hebrew** are available from an in-card language switcher.
 
 ---
 
-## Architecture
+## UI examples
+
+<p align="center">
+  <b>English</b>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <b>Español</b>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <b>Hebrew</b>
+</p>
+
+<p align="center">
+  <img src="add_on_EN.png" alt="PhishWall UI - English" width="250"/>
+  <img src="add_on_es.png" alt="PhishWall UI - Spanish" width="250"/>
+  <img src="add_on_img.png" alt="PhishWall UI - Hebrew" width="250"/>
+</p>
+
+---
+
+## Threat focus (design rationale)
+
+### Frequency, relevance, and priority (public reporting)
+
+**Israel (2025).** In its [annual report](https://www.gov.il/en/pages/2025report), Israel’s **National Cyber Directorate** states that reported cyber incidents rose by about **55%** and that **phishing** remained the dominant vector, accounting for **52%** of reported cases.
+
+**Global (Q1 2026).** Microsoft Threat Intelligence’s [email threat landscape — Q1 2026](https://www.microsoft.com/en-us/security/blog/2026/04/30/email-threat-landscape-q1-2026-trends-and-insights/) report frames **credential phishing** (including link-heavy delivery), **QR code phishing** (noting it as the fastest-growing vector that quarter, with volumes more than doubling), and prevalent **business email compromise (BEC)** as defining themes alongside ongoing payload experimentation.
+
+**Synthesis.** Independent public reporting places **phishing** at the center of real-world incident mix (Israel) and defender telemetry (Microsoft), with **QR-assisted** flows and **BEC** attracting particular attention in Microsoft’s Q1 2026 analysis. That ordering motivated PhishWall’s feature set: **QR** decoding and linked-resource handling, **BEC/priority-threat** gates, **sender/brand impersonation** signals, plus **URL/attachment** hygiene and optional reputation—implemented as transparent **heuristics**, not as a substitute for full mail-security stacks.
+
+PhishWall encodes those priorities in code:
+
+| Theme | Implementation (high level) |
+|--------|-----------------------------|
+| **QR / quishing** | Decode QR from images (`contentBase64`); heuristically fetch and decode QR-linked URLs with strict limits (`scanners/qr_scanner.py`, `QrScannerAdapter` in `services/scanner_pipeline.py`). |
+| **BEC / impersonation pressure** | Finance/urgency terms + sender/wording gates (`data/priority_threat_keywords.json`, `PriorityThreatScannerAdapter`). |
+| **Spoofing & brands** | Look-alikes, display-name vs domain, punycode (`data/impersonation_targets.json`, `lookalike_domain_scanner.py`, `sender_scanner.py`). |
+| **Traditional phishing vectors** | URL hygiene + optional reputation; attachment typing, PDF link extraction, executables/archives (`url_scanner.py`, `attachment_scanner.py`). |
+
+---
+
+## Architecture and scanner pipeline
+
+**Client → server.** `Main.js` → `EmailService.js` → `ApiService.js` → `main.py` → `services/scan_service.py`.
 
 ```mermaid
 flowchart LR
@@ -36,19 +78,23 @@ flowchart LR
     GmailAddon --> UiService["Cards (UiService.js)"]
 ```
 
-QR runs inside the pipeline (`scanner_pipeline.py` → `qr_scanner.py`); the diagram omits QR for clarity — see **Scanner pipeline** below. Static figure: repo root **`img.png`**.
+The diagram simplifies the backend: **QR** runs inside the pipeline (`scanner_pipeline.py` → `qr_scanner.py`) but is omitted above for readability.
+
+**Pipeline behavior.** Adapters in `services/scanner_pipeline.py` accumulate penalties and narratives; **`verdict_engine.py`** applies policy on top of the numeric result.
+
+**Execution order:** keywords → language → sender → time → **QR** (attachments/inline images and QR-linked URLs) → priority threats (BEC) → link-density nudge → URL → attachments → totals → verdict.
 
 ---
 
-## Scanner pipeline (implemented)
+## Design decisions and trade-offs
 
-**Pattern:** Pipeline adapters + central aggregation; `verdict_engine.py` maps score + strong indicators to verdict.
-
-**Key files:** `scanners/base.py`, `services/scanner_pipeline.py`, `scanners/qr_scanner.py`, `services/verdict_engine.py`, `services/scan_service.py`.
-
-**Order:** keywords → language → sender → time → **QR** (attachments/inline + QR-linked URLs) → priority threats (BEC) → link base → URL → attachments → aggregate → verdict.
-
-**QR (brief):** Decode from image bytes (`contentBase64`). Optionally treat URLs as QR-related (heuristic → fetch up to a small limit → decode). Penalties and findings land in `scoreBreakdown.qr`, `qrSummary`, and `riskIndicators`; verdict policy treats decoded QR URLs as stronger signals.
+| Decision | Rationale |
+|----------|-----------|
+| **Rule-first core** | Predictable behavior and straightforward unit tests without mandatory third parties. |
+| **Optional reputation** | IPQS (email/URL), VirusTotal (domain), Google Safe Browsing (URL fallback) deepen signals when keys exist; outages or missing keys still yield a complete scan. |
+| **URL penalty dampening** | Only **`urlApplied = int(urlRaw × 0.7)`** enters **`totalPenalty`**, reducing single-link noise vs. spoofing or file-based risks. |
+| **Verdict ≠ raw score rank** | `verdict_engine.py` combines **`maliciousScore`** with categorical “strong indicators” (executables, spoofing cues, flagged reputation, QR/BEC signals, urgent-keyword thresholds). |
+| **Local backend + tunnel** | Default submission path: run FastAPI locally, expose with ngrok (or similar), point `gmail-addon/Config.js` at **`…/scan`**. Same **`/scan`** contract supports a hosted URL later—swap config and redeploy only. |
 
 ---
 
@@ -57,13 +103,14 @@ QR runs inside the pipeline (`scanner_pipeline.py` → `qr_scanner.py`); the dia
 ```text
 phishwall_public_/
 ├── README.md
-├── .env.example
+├── add_on_EN.png / add_on_es.png / add_on_img.png
 ├── run_dev.ps1 / run_dev.bat
-├── .clasp.json (Apps Script: rootDir gmail-addon)
-├── gmail-addon/   (Main, EmailService, ApiService, UiService, Config, appsscript.json)
+├── .clasp.json               # Apps Script rootDir: gmail-addon
+├── gmail-addon/              # Main, EmailService, ApiService, UiService, Config, appsscript.json
 └── phishwall_backend/
     ├── main.py, models.py, requirements.txt
-    ├── data/ (risk_keywords, priority_threat_keywords, impersonation_targets)
+    ├── .env.example
+    ├── data/                 # risk_keywords.txt, priority_threat_keywords.json, impersonation_targets.json
     ├── scanners/, services/, tests/
 ```
 
@@ -71,82 +118,58 @@ phishwall_public_/
 
 ## Run locally
 
-1. **Deps:** `cd phishwall_backend` → `python -m pip install -r requirements.txt`
+1. **Python deps:** `cd phishwall_backend` → `python -m pip install -r requirements.txt`
+2. **Secrets:** copy **`phishwall_backend/.env.example`** → **`phishwall_backend/.env`**. Use `KEY=value` (no spaces around `=`). Optional: `IPQS_API_KEY`, `GOOGLE_SAFE_BROWSING_API_KEY`, `VT_API_KEY`.
+3. **API:** from `phishwall_backend`:
 
-2. **Env:** Copy `phishwall_backend/.env.example` to `phishwall_backend/.env`. Format `KEY=value` (no spaces around `=`). Keys: `IPQS_API_KEY`, `GOOGLE_SAFE_BROWSING_API_KEY`, `VT_API_KEY` — all optional; without them, local scans still work.
+   ```bash
+   python -m uvicorn main:app --host 0.0.0.0 --port 8000
+   ```
 
-3. **Backend:** From `phishwall_backend`:  
-   `python -m uvicorn main:app --host 0.0.0.0 --port 8000`  
-   Check `http://localhost:8000/health`.
+   Health: `http://localhost:8000/health`
+4. **Public URL:** `ngrok http 8000` (or equivalent). Set **`gmail-addon/Config.js`** → `API_URL = "https://<host>/scan"`.
+5. **Add-on:** from repo root, `clasp push` (Windows: `clasp.cmd push`). In Apps Script: **Deploy → Manage deployments**; refresh Gmail.
 
-4. **Ngrok:** `ngrok http 8000` — set `gmail-addon/Config.js` → `API_URL = "https://<your-ngrok-host>/scan"`.
+**Common issues:** port `8000` already bound (stop the conflicting process); ngrok **502** usually means nothing is listening on `localhost:8000`.
 
-5. **Add-on:** Repo root: `clasp.cmd push` (Windows) or `clasp push`; **Deploy → Manage deployments** in Apps Script; refresh Gmail.
-
-**Windows quick fixes:** Port in use (`10048`) → find listener on 8000 and `Stop-Process`. Ngrok **502** → backend not up on localhost:8000.
-
----
-
-## Design choices (technical)
-
-- **Rule-based core:** Deterministic, testable behavior without external APIs.
-- **External APIs as enrichment:** IPQS Email (`ipqs_email_client.py` / `sender_scanner.py`), VirusTotal domain (`sender_scanner.py`), IPQS URL + Google Safe Browsing fallback (`url_scanner.py`). Missing keys or provider failures → local-only path still returns a full response.
-- **Local + ngrok:** Fast iterate/demo loop; can swap later for a hosted backend (update `Config.js` + env on host only).
+**API input:** Request body is validated with Pydantic; unknown fields are ignored (`ScanRequest.extra = "ignore"`).
 
 ---
 
-## Threat focus & data
+## External services (optional)
 
-Prioritizes **QR-related abuse** and **BEC/impersonation** (urgency, finance language, brand mismatch). BEC terms: `data/priority_threat_keywords.json`. Brands/look-alikes: `data/impersonation_targets.json` + `lookalike_domain_scanner.py` (normalized matching, typo-style variants).
-
----
-
-## Coverage (summary)
-
-**Sender / URL / attachments:** Look-alikes, display-name vs domain, URL hygiene (shorteners, punycode, etc.), executables/archives/disguised names, PDF link heuristics, optional reputation as above.
-
-**Input:** Pydantic limits, extra fields ignored, generic 500 body.
+| Service | Code | Role |
+|---------|------|------|
+| IPQS Email | `ipqs_email_client.py`, `sender_scanner.py` | Sender/email reputation enrichment |
+| VirusTotal | `sender_scanner.py` | Domain reputation |
+| IPQS URL | `url_scanner.py` | URL reputation |
+| Google Safe Browsing | `url_scanner.py` | URL reputation fallback |
 
 ---
 
-## Scoring & verdict
+## Scoring and verdict
 
-### How the score is built
+**Total penalty** (`scanner_pipeline.py`) sums: **`keywords`**, **`language`**, **`sender`**, **`time`**, **`qr`**, **`priorityThreats`**, **`linkBase`**, **`urlApplied`**, **`attachments`**. Then **`score = clamp(100 − totalPenalty)`** (`scan_service.py`). **`urlRaw`** is reported for transparency but **not** added into the total—only **`urlApplied`**.
 
-`scanner_pipeline.py` sums these into **`totalPenalty`** (then `score = clamp(100 − totalPenalty)` in `scan_service.py`): **`keywords`**, **`language`**, **`sender`**, **`time`**, **`qr`**, **`priorityThreats`**, **`linkBase`**, **`urlApplied`**, **`attachments`**.
+**Relative weight (scan quickly):**
 
-Important: **`urlRaw` is diagnostic only.** URL penalties from `url_scanner.py` accumulate as `urlRaw`; only **`urlApplied = int(urlRaw × 0.7)`** counts toward the score — deliberate dampening so one odd link does not overshadow identity and file-based risk.
+| Bucket | Role | Notes (code) |
+|--------|------|----------------|
+| Attachments | Largest single spikes | e.g. executable **`+60`**, disguised name **`+35`**, PDF-with-links **`+25`**, risky archive **`+12`** (`attachment_scanner.py`) |
+| Sender | Strong structural signal | VT domain hits, display-name/brand mismatch, punycode; IPQS vs look-alike blend **`IPQS×0.7 + look-alike×0.6`** (`sender_scanner.py`) |
+| URLs | High raw, softened in total | **`~70%`** of URL raw penalty applies (`UrlScannerAdapter`) |
+| Keywords | Capped language pressure | **`risk_keywords.txt`**, escalation, cap **`40`** (`keyword_scanner.py`) |
+| QR | Strong, bounded | Attachment branch capped **`36`**, linked-fetch branch **`42`**, then combined in **`qr`** (`qr_scanner.py`) |
+| BEC / priority | Medium layer | **`+16`** multi-signal / **`+5`** weak single (`PriorityThreatScannerAdapter`) |
+| Language / time / links | Light nudges | Language cap **`15`**; time **`≤2`** and only under BEC/ATO-like context (`time_scanner.py`); link-base cap **`3`** |
 
-### Where most of the weight comes from (relative)
-
-| Bucket | Typical role | Why |
-|---|---|---|
-| **Attachments** | Often the **largest single jumps** | Executable **`+60`**, disguised filename **`+35`**, PDF with extracted links **`+25`**, risky archive **`+12`** (`attachment_scanner.py`). Direct delivery of payloads is treated as the strongest numeric signal. |
-| **Sender** | **Heavy** alongside attachments | VirusTotal malicious domain **`+30`** / suspicious **`+12`**, display-name vs domain mismatch **`+18`**, punycode domain **`+8`**, etc.; IPQS Email + look-alike blend uses **`IPQS × 0.7` + look-alike × 0.6** (`sender_scanner.py`). Spoofed or bad infra should outweigh wording alone. |
-| **URLs** | **High raw** but **softened** in total | Individual URL issues often add sizeable `urlRaw`; only **`~70%`** enters the final penalty so heuristic URL noise is less likely to dominate executables or “VT malicious”. |
-| **Keywords** | **Capped medium** | Per-match weights from `risk_keywords.txt` plus small combo escalation; **hard cap `40`** (`keyword_scanner.py`) so coercion language raises risk without drowning structural signals. |
-| **QR** | **Strong but capped** | Per-payload scoring (URL inside QR ranks higher). Attachment QR subtotal capped at **`36`** and QR-linked-fetch subtotal at **`42`**, then **added** into **`qr`** (`qr_scanner.py`, `QrScannerAdapter`). Reduces duplication across images/URLs without ignoring quishing. |
-| **Priority / BEC** | **Medium bump** | **`+16`** when multiple BEC-aligned signals agree, **`+5`** for a single weak signal (`PriorityThreatScannerAdapter`). |
-| **Language / time / link count** | **Light support** | Language max **`15`**, time at most **`~3`**, link-base cap **`3`** (`language_scanner.py`, `time_scanner.py`, `LinkBaseScannerAdapter`). |
-
-**Verdict (`verdict_engine.py`) is not pure ranking of the breakdown.** It combines **`maliciousScore`** (`100 − score`) with **strong indicators** (executables, disguised filenames, spoofing markers, flagged reputation, urgent-keyword thresholds, QR/BEC signals, etc.), so Safe / Suspicious / Dangerous reflects policy, not numbers alone.
+**Verdict** merges **`maliciousScore`** with policy rules in **`verdict_engine.py`**—not the breakdown table alone.
 
 ---
 
-## External services (reference)
+## Limitations
 
-| Service | Where | Notes |
-|---|---|---|
-| IPQS Email | `sender_scanner`, `ipqs_email_client` | Optional |
-| VirusTotal domain | `sender_scanner` | Optional |
-| IPQS URL | `url_scanner` | Optional |
-| Google Safe Browsing | `url_scanner` | Fallback for URL rep |
-
----
-
-## Hosted backend (later)
-
-Deploy `phishwall_backend` with e.g. `uvicorn main:app --host 0.0.0.0 --port $PORT`, set the same env vars, point `Config.js` to `https://<host>/scan`, redeploy the add-on. No architecture change required; consider rate limits, monitoring, and key rotation for production.
+Heuristic rules and curated lists cannot cover every campaign; reputation APIs carry quotas and latency. Gmail **CardService** limits layout richness compared with a full web app.
 
 ---
 
@@ -159,13 +182,8 @@ python -m unittest discover -s tests -v
 
 ---
 
-## Limitations
+## Submission checklist
 
-Heuristic scoring and finite brand lists; reputation depends on quotas; CardService UI limits expressiveness.
+**Include:** `README.md`; UI screenshots **`add_on_EN.png`**, **`add_on_es.png`**, **`add_on_img.png`**; **`gmail-addon/`**; **`phishwall_backend/`** (no secrets); helper scripts (`run_dev.*`); **`.gitignore`**.
 
----
-
-## Submission
-
-**Include:** `README.md`, `img.png`, `gmail-addon/*`, `phishwall_backend/*` (no secrets), run scripts, `.gitignore`.  
-**Exclude:** real `.env`, `__pycache__`, noisy logs.
+**Exclude:** real `.env` files, `__pycache__/`, ephemeral logs.
