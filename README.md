@@ -111,7 +111,25 @@ Prioritizes **QR-related abuse** and **BEC/impersonation** (urgency, finance lan
 
 ## Scoring & verdict
 
-Orchestration in `scan_service.py`: start 100, subtract penalties, scale URL applied (`urlApplied = int(urlRaw * 0.7)`), clamp, `maliciousScore = 100 - score`. Verdict in `verdict_engine.py` uses **score + strong indicators** (executables, spoofing, bad links/reputation, urgent keywords, decoded QR, BEC, etc.) — not score alone.
+### How the score is built
+
+`scanner_pipeline.py` sums these into **`totalPenalty`** (then `score = clamp(100 − totalPenalty)` in `scan_service.py`): **`keywords`**, **`language`**, **`sender`**, **`time`**, **`qr`**, **`priorityThreats`**, **`linkBase`**, **`urlApplied`**, **`attachments`**.
+
+Important: **`urlRaw` is diagnostic only.** URL penalties from `url_scanner.py` accumulate as `urlRaw`; only **`urlApplied = int(urlRaw × 0.7)`** counts toward the score — deliberate dampening so one odd link does not overshadow identity and file-based risk.
+
+### Where most of the weight comes from (relative)
+
+| Bucket | Typical role | Why |
+|---|---|---|
+| **Attachments** | Often the **largest single jumps** | Executable **`+60`**, disguised filename **`+35`**, PDF with extracted links **`+25`**, risky archive **`+12`** (`attachment_scanner.py`). Direct delivery of payloads is treated as the strongest numeric signal. |
+| **Sender** | **Heavy** alongside attachments | VirusTotal malicious domain **`+30`** / suspicious **`+12`**, display-name vs domain mismatch **`+18`**, punycode domain **`+8`**, etc.; IPQS Email + look-alike blend uses **`IPQS × 0.7` + look-alike × 0.6** (`sender_scanner.py`). Spoofed or bad infra should outweigh wording alone. |
+| **URLs** | **High raw** but **softened** in total | Individual URL issues often add sizeable `urlRaw`; only **`~70%`** enters the final penalty so heuristic URL noise is less likely to dominate executables or “VT malicious”. |
+| **Keywords** | **Capped medium** | Per-match weights from `risk_keywords.txt` plus small combo escalation; **hard cap `40`** (`keyword_scanner.py`) so coercion language raises risk without drowning structural signals. |
+| **QR** | **Strong but capped** | Per-payload scoring (URL inside QR ranks higher). Attachment QR subtotal capped at **`36`** and QR-linked-fetch subtotal at **`42`**, then **added** into **`qr`** (`qr_scanner.py`, `QrScannerAdapter`). Reduces duplication across images/URLs without ignoring quishing. |
+| **Priority / BEC** | **Medium bump** | **`+16`** when multiple BEC-aligned signals agree, **`+5`** for a single weak signal (`PriorityThreatScannerAdapter`). |
+| **Language / time / link count** | **Light support** | Language max **`15`**, time at most **`~3`**, link-base cap **`3`** (`language_scanner.py`, `time_scanner.py`, `LinkBaseScannerAdapter`). |
+
+**Verdict (`verdict_engine.py`) is not pure ranking of the breakdown.** It combines **`maliciousScore`** (`100 − score`) with **strong indicators** (executables, disguised filenames, spoofing markers, flagged reputation, urgent-keyword thresholds, QR/BEC signals, etc.), so Safe / Suspicious / Dangerous reflects policy, not numbers alone.
 
 ---
 
