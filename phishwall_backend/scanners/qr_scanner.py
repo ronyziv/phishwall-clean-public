@@ -1,3 +1,14 @@
+"""QR-phishing detector.
+
+Two paths:
+- scan_qr_attachments: decode QR codes from inline image attachments.
+- scan_qr_linked_resources: spot URLs that *look* QR-related (path/query hints
+  or image extensions), optionally fetch them, and decode any QR found.
+
+cv2 is imported eagerly at module top to avoid lazy-load hiccups inside thread
+pools at request time.
+"""
+
 import base64
 import logging
 import os
@@ -13,6 +24,7 @@ from scanners.external_http_config import QR_FETCH_TIMEOUT, SCANNER_MAX_WORKERS
 
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
+# Words inside a decoded QR payload that suggest credential phishing.
 SUSPICIOUS_QR_TERMS = (
     "login",
     "verify",
@@ -25,6 +37,7 @@ SUSPICIOUS_QR_TERMS = (
     "2fa",
 )
 URL_PATTERN = re.compile(r"^https?://", re.IGNORECASE)
+# Hints that a URL itself is a QR target (image / challenge page) — gates the fetch step.
 QR_LINK_HINT_TERMS = (
     "qr",
     "qrcode",
@@ -37,6 +50,7 @@ QR_LINK_HINT_TERMS = (
     "mfa",
 )
 IMAGE_LINK_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+# Cap fetches per email so QR scanning stays cheap on link-heavy mail.
 REMOTE_QR_FETCH_LIMIT = 3
 FETCH_TIMEOUT_SECONDS = QR_FETCH_TIMEOUT
 
@@ -51,9 +65,16 @@ def _is_image_attachment(filename: str, mime_type: str) -> bool:
 
 
 def _decode_qr_from_image_bytes(image_bytes: bytes) -> List[str]:
+    """Return distinct QR payloads decoded from a single image buffer.
+
+    Tries detectAndDecodeMulti first, falls back to single-QR decode for OpenCV
+    builds where multi-detect is flaky. Both calls swallow exceptions so corrupt
+    or non-image bytes can't break the request.
+    """
     if not image_bytes:
         return []
 
+    # OpenCV needs an ndarray, not raw bytes.
     np_image = np.frombuffer(image_bytes, dtype=np.uint8)
     image = cv2.imdecode(np_image, cv2.IMREAD_COLOR)
     if image is None:
@@ -62,7 +83,6 @@ def _decode_qr_from_image_bytes(image_bytes: bytes) -> List[str]:
     detector = cv2.QRCodeDetector()
     decoded_values: List[str] = []
 
-    # Preferred path: decode multiple QR codes if present.
     try:
         ok_multi, decoded_multi, _, _ = detector.detectAndDecodeMulti(image)
         if ok_multi and decoded_multi:
@@ -70,7 +90,6 @@ def _decode_qr_from_image_bytes(image_bytes: bytes) -> List[str]:
     except Exception:
         pass
 
-    # Fallback: single QR decode.
     if not decoded_values:
         try:
             decoded_single, _, _ = detector.detectAndDecode(image)
@@ -79,17 +98,17 @@ def _decode_qr_from_image_bytes(image_bytes: bytes) -> List[str]:
         except Exception:
             return []
 
-    # Deduplicate while preserving order.
+    # dict.fromkeys preserves first-seen order.
     return list(dict.fromkeys(decoded_values))
 
 
 def _score_decoded_qr_payload(payload: str) -> int:
+    # URL > suspicious-text > generic-text. URL inside a QR is the textbook quishing pattern.
     lowered = str(payload or "").strip().lower()
     if not lowered:
         return 0
 
     if URL_PATTERN.search(lowered):
-        # URL inside QR is high-risk in phishing campaigns.
         return 18
 
     if any(term in lowered for term in SUSPICIOUS_QR_TERMS):
@@ -99,6 +118,8 @@ def _score_decoded_qr_payload(payload: str) -> int:
 
 
 def _decode_qr_payloads_for_source(image_bytes: bytes, source_label: str) -> Tuple[List[str], List[str], int]:
+    # source_label is embedded in the user-facing finding so the add-on can show
+    # "from image attachment 'foo.png'" vs "from linked resource 'https://...'".
     payloads = _decode_qr_from_image_bytes(image_bytes)
     findings: List[str] = []
     risk_penalty = 0
@@ -115,6 +136,8 @@ def _decode_qr_payloads_for_source(image_bytes: bytes, source_label: str) -> Tup
 
 
 def _is_qr_related_url(url: str) -> bool:
+    # Image-extension URLs and any URL whose path/query/fragment hints at QR.
+    # Fragment is included because some trackers stash the target in #...
     raw = str(url or "").strip().lower()
     if not raw:
         return False
@@ -138,6 +161,9 @@ def _is_qr_related_url(url: str) -> bool:
 
 
 def _fetch_url_bytes(url: str) -> Optional[bytes]:
+    # Returns the body even when Content-Type isn't image-like — phishing pages
+    # often serve images with bogus types, and OpenCV will just fail to decode if
+    # the bytes aren't actually an image.
     req = request.Request(
         str(url).strip(),
         headers={"User-Agent": "PhishWall-QRScanner/1.0"},
@@ -149,16 +175,18 @@ def _fetch_url_bytes(url: str) -> Optional[bytes]:
             payload = resp.read()
             if not payload:
                 return None
-            # Prefer image-like targets for QR decoding attempts.
             if "image/" in content_type or "octet-stream" in content_type:
                 return payload
-            # Some servers return incorrect/missing content type for images.
             return payload
     except Exception:
         return None
 
 
 def scan_qr_attachments(attachments: List[dict]) -> Dict[str, object]:
+    """Decode QRs from every image attachment and aggregate findings.
+
+    Penalty capped at 36 to avoid runaway scoring on duplicate QRs across images.
+    """
     if not isinstance(attachments, list):
         attachments = []
 
@@ -194,7 +222,6 @@ def scan_qr_attachments(attachments: List[dict]) -> Dict[str, object]:
         findings.extend(source_findings)
         risk_penalty += source_penalty
 
-    # Avoid runaway penalty if multiple images contain similar QR payloads.
     risk_penalty = min(risk_penalty, 36)
     deduped_payloads = list(dict.fromkeys(decoded_payloads))
     deduped_findings = list(dict.fromkeys(findings))
@@ -213,8 +240,10 @@ def _safe_fetch_one_linked(
     url: str,
     fetch: Callable[[str], Optional[bytes]],
 ) -> Tuple[str, Dict[str, object]]:
-    """
-    Fetch + decode a single QR-related URL on a worker thread (network-bound).
+    """Fetch + decode one QR-related URL on a worker thread.
+
+    Always returns a partial result — even on fetch failure we surface a small
+    penalty + finding so the user sees we tried. `fetch` is injectable for tests.
     """
     scanned_urls = 1
     decoded_payloads: List[str] = []
@@ -245,6 +274,7 @@ def _safe_fetch_one_linked(
         decoded_count += len(source_payloads)
         decoded_payloads.extend(source_payloads)
         findings.extend(source_findings)
+        # +4 bonus: a QR fetched from a remote URL is a stronger signal than one in an attachment.
         risk_penalty += source_penalty + 4
     else:
         findings.append(f"QR-related linked resource fetched but no QR decoded: {url}")
@@ -262,6 +292,11 @@ def scan_qr_linked_resources(
     urls: List[str],
     fetcher: Optional[Callable[[str], Optional[bytes]]] = None,
 ) -> Dict[str, object]:
+    """Score QR-shaped URLs, then fetch+decode the top REMOTE_QR_FETCH_LIMIT.
+
+    First pass adds a small "looks like QR" signal per URL (works offline).
+    Second pass fetches in parallel since calls are network-bound and independent.
+    """
     if not isinstance(urls, list):
         urls = []
 
@@ -276,13 +311,14 @@ def scan_qr_linked_resources(
     decoded_count = 0
     risk_penalty = 0
 
-    # Heuristic-only signal: QR-looking linked resource is stronger than a normal link.
+    # QR-shaped link is stronger than a generic URL hit, even before fetching.
     for url in qr_candidate_urls:
         risk_penalty += 7
         findings.append(f"QR-related linked resource detected: {url}")
 
     fetch_batch = qr_candidate_urls[:REMOTE_QR_FETCH_LIMIT]
     if len(fetch_batch) <= 1:
+        # Skip thread-pool overhead for the common 0/1 case.
         for url in fetch_batch:
             _, part = _safe_fetch_one_linked(url, fetch)
             scanned_urls += int(part["scanned"])
@@ -301,6 +337,7 @@ def scan_qr_linked_resources(
             findings.extend(part["findings"])  # type: ignore[arg-type]
             risk_penalty += int(part["risk_penalty"])
 
+    # Hard cap so a single email full of QR-shaped links can't dominate the score.
     risk_penalty = min(risk_penalty, 42)
     deduped_payloads = list(dict.fromkeys(decoded_payloads))
     deduped_findings = list(dict.fromkeys(findings))

@@ -1,3 +1,19 @@
+"""Scanner pipeline orchestration.
+
+Each scanner (keyword/language/sender/...) is wrapped in a small adapter that
+turns its dict result into a uniform ScannerResult. The pipeline runs adapters
+in three phases:
+
+  Phase 1: keywords, language, sender, time   (independent — fully parallel)
+  Phase 2: priority_threats                    (reads keyword + sender state)
+  Phase 3: qr, link_base, url, attachments     (independent — fully parallel)
+
+Phase boundaries exist only where a later scanner depends on an earlier one's
+output. Within a phase, results are merged into shared `state`/`breakdown`/
+`findings` only after all parallel work completes, so the merge stays
+single-threaded and deterministic.
+"""
+
 import json
 import logging
 import re
@@ -20,6 +36,8 @@ PRIORITY_KEYWORDS_PATH = Path(__file__).resolve().parent.parent / "data" / "prio
 
 
 def normalize_urls(urls_value: Any, body_text: str) -> List[str]:
+    # Prefer the explicit URL list from the add-on; fall back to extracting URLs
+    # from the body when the client didn't pre-parse them (legacy / minimal payloads).
     if isinstance(urls_value, list):
         urls = [str(url).strip() for url in urls_value if str(url).strip()]
     else:
@@ -32,6 +50,8 @@ def normalize_urls(urls_value: Any, body_text: str) -> List[str]:
 
 
 def collect_email_candidates(data: Dict[str, Any]) -> List[str]:
+    # Gather every header/body field that might contain email-like strings, so the
+    # sender scanner can run reputation lookups against Reply-To, To, etc.
     candidates: List[str] = []
     direct_fields = ["from", "to", "cc", "bcc", "reply_to", "subject", "body", "body_snippet"]
     for field in direct_fields:
@@ -62,6 +82,7 @@ def _to_str_list(value: Any) -> List[str]:
 
 
 def _load_priority_keywords() -> Dict[str, List[str]]:
+    # Built-in defaults so the scanner still works if the JSON file is missing.
     defaults = {
         "bec_finance_terms": ["wire transfer", "invoice", "payment"],
         "bec_pressure_terms": ["urgent", "asap", "immediately"],
@@ -95,6 +116,8 @@ def _consume_scan_result(
     risk_words_holder: List[int],
     result: ScannerResult,
 ) -> None:
+    # Single-threaded merge of one scanner's result into the shared aggregates.
+    # Called only after the phase's parallel work completes, so no locking needed.
     state[result.name] = {
         "breakdown": result.breakdown,
         "summary": result.summary,
@@ -158,6 +181,8 @@ class SenderScannerAdapter:
             context_text=sender_context,
         )
 
+        # Split findings: provider-availability messages are info-only and must not
+        # contribute to the user-facing "risk indicators" panel.
         risk_findings: List[str] = []
         info_findings: List[str] = []
         for finding in result.get("findings", []):
@@ -208,6 +233,12 @@ class TimeScannerAdapter:
 
 
 class PriorityThreatScannerAdapter:
+    """BEC pattern detector: combines keyword + sender intermediates with body text.
+
+    Lives in Phase 2 because it reads outputs from Phase 1 (keyword penalty,
+    sender findings).
+    """
+
     name = "priority_threats"
 
     def applies(self, context: ScanContext, state: Dict[str, Any]) -> bool:
@@ -226,8 +257,9 @@ class PriorityThreatScannerAdapter:
 
         bec_finance_hit = any(term in normalized_text for term in bec_finance_terms)
         lexical_pressure_hit = any(term in normalized_text for term in bec_pressure_terms)
-        # Require explicit pressure wording in the merged text OR strong finance+keyword coupling.
-        # Generic keyword-score spikes alone must not substitute for BEC "pressure" (reduces study/personal FP).
+        # Pressure may be explicit OR implied by a strong keyword score combined with
+        # finance language. Bare keyword spikes alone do *not* count as pressure —
+        # that path historically over-flagged casual study/personal mail.
         bec_pressure_hit = lexical_pressure_hit or (keyword_penalty >= 14 and bec_finance_hit)
         bec_impersonation_hit = _contains_any(
             " | ".join(sender_raw.get("findings", [])),
@@ -238,6 +270,7 @@ class PriorityThreatScannerAdapter:
                 "sender uses punycode domain",
             ],
         )
+        # No-link BEC is a known pattern: "send the wire today, reply only by email".
         bec_no_link_pattern = bec_finance_hit and bec_pressure_hit and len(context.urls) == 0
 
         bec_signal_count = (
@@ -246,6 +279,7 @@ class PriorityThreatScannerAdapter:
             + int(bec_impersonation_hit)
             + int(bec_no_link_pattern)
         )
+        # Two independent signals = full BEC verdict; one alone = soft signal only.
         bec_detected = bec_signal_count >= 2
         if bec_detected:
             risk_penalty += 16
@@ -278,6 +312,8 @@ class QrScannerAdapter:
         return has_attachments or has_urls
 
     def run(self, context: ScanContext, state: Dict[str, Any]) -> ScannerResult:
+        # Attachment decoding (CPU-bound) and link-resource fetching (network-bound)
+        # are independent — run them on a 2-thread pool so wall time = max, not sum.
         with ThreadPoolExecutor(max_workers=2) as qr_pool:
             fa = qr_pool.submit(scan_qr_attachments, context.attachments)
             fb = qr_pool.submit(scan_qr_linked_resources, context.urls)
@@ -312,6 +348,8 @@ class QrScannerAdapter:
 
 
 class LinkBaseScannerAdapter:
+    """Tiny per-link tax: a couple of points for emails with many links."""
+
     name = "link_base"
 
     def applies(self, context: ScanContext, state: Dict[str, Any]) -> bool:
@@ -322,6 +360,7 @@ class LinkBaseScannerAdapter:
         if links <= 0:
             return ScannerResult(name=self.name, breakdown={"linkBase": 0}, summary={"count": 0})
 
+        # Capped at 3 so newsletter mail can't dominate the score.
         penalty = min(3, 1 + max(0, links - 1))
         return ScannerResult(
             name=self.name,
@@ -339,6 +378,7 @@ class UrlScannerAdapter:
 
     def run(self, context: ScanContext, state: Dict[str, Any]) -> ScannerResult:
         result = scan_urls(context.urls)
+        # Provider-availability messages are info-only.
         risk_findings: List[str] = []
         info_findings: List[str] = []
         for finding in result.get("findings", []):
@@ -348,6 +388,8 @@ class UrlScannerAdapter:
             else:
                 risk_findings.append(finding)
 
+        # urlRaw is reported for diagnostics; urlApplied (raw * 0.7) is what feeds
+        # the score. The discount keeps URL-heavy newsletters from over-scoring.
         raw_penalty = int(result.get("riskPenalty", 0))
         applied_penalty = int(raw_penalty * 0.7)
         return ScannerResult(
@@ -379,6 +421,7 @@ class AttachmentScannerAdapter:
         if count > 0:
             info_findings.append(f"Found {count} attachment(s).")
 
+        # Safe-PDF lines are diagnostic, not warnings.
         for finding in result.get("findings", []):
             if str(finding).startswith("PDF attachment detected (no links found):"):
                 info_findings.append(finding)
@@ -402,9 +445,11 @@ class AttachmentScannerAdapter:
 
 
 class ScannerPipeline:
-    # Phase grouping: scanners in a phase touch only ScanContext (+ shared state merged after the phase).
-    # Phase 2 must stay after Phase 1 because priority_threats reads keyword/sender intermediates.
+    """Three-phase orchestrator. See module docstring for the phase model."""
 
+    # Within a phase, scanners only touch the immutable ScanContext (+ shared state
+    # *merged after* the phase). Phase 2 must stay after Phase 1 because
+    # priority_threats reads keyword + sender intermediates.
     PHASE1_ORDER = ["keywords", "language", "sender", "time"]
     PHASE2_ORDER = ["priority_threats"]
     PHASE3_ORDER = ["qr", "link_base", "url", "attachments"]
@@ -419,6 +464,7 @@ class ScannerPipeline:
         info_findings: List[str] = agg["info_findings"]
         risk_words_holder: List[int] = agg["risk_words_holder"]
 
+        # Filter to scanners that exist *and* apply to this context.
         by_name = {scanner.name: scanner for scanner in self.scanners}
         pending: List[Scanner] = []
         for name in ordered_names:
@@ -431,6 +477,7 @@ class ScannerPipeline:
 
         _log = logging.getLogger(__name__)
         if len(pending) == 1:
+            # Skip thread-pool overhead when there's nothing to parallelize.
             try:
                 result = pending[0].run(context, state)
             except Exception:
@@ -445,6 +492,8 @@ class ScannerPipeline:
             _consume_scan_result(state, breakdown, summaries, risk_indicators, info_findings, risk_words_holder, result)
             return
 
+        # Run scanners in parallel. We collect all results and *then* merge in
+        # PHASE-order so duplicate breakdown keys (rare) merge deterministically.
         workers = max(2, min(SCANNER_MAX_WORKERS, len(pending)))
         with ThreadPoolExecutor(max_workers=workers) as executor:
             future_map = {executor.submit(scan.run, context, state): scan for scan in pending}
@@ -454,6 +503,7 @@ class ScannerPipeline:
                 try:
                     completed_by_name[scanner.name] = fut.result()
                 except Exception:
+                    # One scanner failing must not poison the whole pipeline.
                     _log.exception("Scanner '%s' failed; continuing without its penalties.", scanner.name)
                     completed_by_name[scanner.name] = ScannerResult(
                         name=scanner.name,
@@ -471,6 +521,8 @@ class ScannerPipeline:
         state: Dict[str, Any] = {}
         risk_indicators: List[str] = []
         info_findings: List[str] = []
+        # Pre-seed every breakdown key so the response shape stays stable even when
+        # a scanner is skipped via `applies()`.
         breakdown = {
             "keywords": 0,
             "language": 0,
@@ -499,6 +551,7 @@ class ScannerPipeline:
 
         risk_words = risk_words_holder[0]
 
+        # urlRaw is intentionally excluded — only urlApplied feeds the score.
         total_penalty = sum(
             int(breakdown[key])
             for key in ["keywords", "language", "sender", "time", "qr", "priorityThreats", "linkBase", "urlApplied", "attachments"]

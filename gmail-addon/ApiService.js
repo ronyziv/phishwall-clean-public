@@ -1,4 +1,17 @@
+/**
+ * Backend HTTP client and response normalizer.
+ *
+ * sendToBackend posts the extracted email payload to the FastAPI /scan endpoint
+ * and returns a normalized result the UI layer can render directly.
+ *
+ * explainBackendHttpError converts HTML error bodies (ngrok offline, placeholder
+ * URL, wrong path) into actionable Apps Script messages that show up in the
+ * error card — much more useful than "HTTP 502".
+ */
+
 function truncateAddonSnippet(text, maxLen) {
+  // Strip HTML tags + collapse whitespace before truncating, so the snippet shown
+  // in the error card is human-readable instead of raw <html> noise.
   const s = String(text || "").replace(/<[^>]*>/gi, " ").replace(/\s+/g, " ").trim();
   if (!maxLen || s.length <= maxLen) return s;
   return s.slice(0, Math.max(0, maxLen - 3)) + "...";
@@ -8,14 +21,12 @@ function asArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
-/**
- * Maps HTML error bodies (ngrok offline, placeholder URL, bad path) to an actionable Apps Script message.
- */
 function explainBackendHttpError(statusCode, responseText, requestUrl) {
   const req = String(requestUrl || "");
   const body = String(responseText || "");
   const bl = body.toLowerCase();
 
+  // Most common pitfall in fresh setups: API_URL still points at the placeholder.
   if (!req || req.indexOf("YOUR_PUBLIC_HOST_HERE") >= 0) {
     return (
       "[Setup] API_URL still uses the placeholder. Open gmail-addon/Config.js and set API_URL " +
@@ -23,6 +34,8 @@ function explainBackendHttpError(statusCode, responseText, requestUrl) {
     );
   }
 
+  // Free ngrok URLs change on every restart, so an "expired URL" looks almost
+  // identical to "tunnel offline". Detect both via body text and 5xx codes.
   const ngrokOffline =
     bl.indexOf("err_ngrok_3200") >= 0 ||
     bl.indexOf("ngrok is offline") >= 0 ||
@@ -61,6 +74,8 @@ function sendToBackend(emailData) {
     method: "post",
     contentType: "application/json",
     payload: JSON.stringify(emailData),
+    // muteHttpExceptions lets us read the body of 4xx/5xx responses for
+    // explainBackendHttpError instead of UrlFetchApp throwing immediately.
     muteHttpExceptions: true,
     // Bypass ngrok-free's HTML interstitial so the JSON response reaches us cleanly.
     headers: { "ngrok-skip-browser-warning": "true" }
@@ -78,6 +93,8 @@ function sendToBackend(emailData) {
 }
 
 function normalizeBackendResult(result) {
+  // Default shape: lets the UI render even when the response is missing/garbled
+  // without scattering null checks across the renderers.
   if (!result || typeof result !== "object") {
     return {
       maliciousScore: 0,
@@ -93,6 +110,7 @@ function normalizeBackendResult(result) {
     };
   }
 
+  // Clamp score into [0, 100] so a malformed backend can't break the gauge.
   const score = Math.max(0, Math.min(100, Number(result.maliciousScore || 0)));
   const comments = asArray(result.comments);
 
@@ -104,6 +122,7 @@ function normalizeBackendResult(result) {
     recommendation: result.recommendation || "",
     familiarSenderCalibration: !!result.familiarSenderCalibration,
     comments: comments,
+    // Older builds returned only `comments`; fall back to it so the UI keeps working.
     riskIndicators: Array.isArray(result.riskIndicators) ? result.riskIndicators : comments,
     infoFindings: asArray(result.infoFindings),
     scoreBreakdown: result.scoreBreakdown || {},

@@ -1,14 +1,15 @@
-"""
-Central outbound HTTP timeouts and parallel scan limits (environment-tunable).
+"""Tunable HTTP timeouts and parallelism caps for the scanner pipeline.
 
-All timeouts are socket read/connect budgets for urllib; on failure scanners fall back
-to local heuristics and info messages — response shape stays the same (API-stable).
+All timeouts are urllib socket budgets. On failure, scanners fall back to local
+heuristics and emit an info finding — the response shape stays stable.
 """
 
 import os
 
 
 def _pos_float(env_name: str, default: float) -> float:
+    # The 0.1s floor blocks pathologically tiny timeouts that would force every
+    # external call to time out.
     try:
         v = float(os.environ.get(env_name, "").strip())
         return v if v > 0.1 else default
@@ -17,6 +18,7 @@ def _pos_float(env_name: str, default: float) -> float:
 
 
 def _pos_int(env_name: str, default: int, minimum: int = 2) -> int:
+    # `minimum` guards parallelism so a misconfigured value can't serialize the pipeline.
     try:
         v = int(os.environ.get(env_name, "").strip())
         if v < minimum:

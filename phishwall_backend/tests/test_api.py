@@ -1,3 +1,5 @@
+"""End-to-end tests for the FastAPI routes (via TestClient — no real network)."""
+
 import unittest
 
 from fastapi.testclient import TestClient
@@ -33,6 +35,7 @@ class ApiTests(unittest.TestCase):
             self.assertIn(key, data)
 
     def test_scan_endpoint_validation_error(self):
+        # `attachments` must be a list — anything else should produce our 422 envelope.
         invalid_payload = {
             "subject": "Bad payload",
             "from": "x@example.com",
@@ -46,6 +49,8 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(body.get("error"), "Validation error")
 
     def test_scan_endpoint_ignores_untrusted_extra_fields(self):
+        # extra="ignore" in the model should silently drop these instead of 422-ing.
+        # Guards against prototype-pollution-style keys ever leaking through validation.
         payload = {
             "subject": "Monthly digest",
             "from": "digest@example.com",

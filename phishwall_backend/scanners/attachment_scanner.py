@@ -1,17 +1,27 @@
+"""Attachment heuristics: classify by extension/MIME, flag disguised filenames,
+extract URLs from PDFs.
+
+Penalties here are calibrated against the URL/sender scanners — executable is the
+strongest single attachment signal, generic non-PDFs the lowest.
+"""
+
 import base64
 import os
 import re
 
 
+# Extensions that almost always mean "code execution" on Windows or cross-platform.
 EXECUTABLE_EXTENSIONS = {
     ".exe", ".msi", ".bat", ".cmd", ".ps1", ".js", ".jse", ".vbs",
     ".vbe", ".wsf", ".wsh", ".scr", ".com", ".pif", ".jar", ".hta"
 }
 
+# Containers often used to ship malware, but legitimate enough to be a moderate signal.
 RISKY_CONTAINER_EXTENSIONS = {
     ".zip", ".rar", ".7z", ".iso", ".img", ".cab", ".ace",
 }
 
+# MIME fallback when filenames are renamed/missing.
 EXECUTABLE_MIME_HINTS = (
     "application/x-msdownload",
     "application/x-msdos-program",
@@ -23,10 +33,13 @@ EXECUTABLE_MIME_HINTS = (
 )
 
 URL_PATTERN = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
+# Classic phishing trick (invoice.pdf.exe). Anchored to end-of-string so my.pdf.notes won't match.
 DOUBLE_EXTENSION_PATTERN = re.compile(
     r"\.(pdf|doc|docx|xls|xlsx|ppt|pptx|txt|jpg|jpeg|png)\.(exe|scr|js|jse|vbs|vbe|cmd|bat|ps1)$",
     re.IGNORECASE,
 )
+# Catches "payload.exe   document" — trailing spaces hide the real extension in
+# clients that left-truncate long names.
 HIDDEN_EXTENSION_TRAIL_PATTERN = re.compile(r"\.(exe|scr|js|vbs|cmd|bat|ps1)\s+[A-Za-z0-9]+$", re.IGNORECASE)
 
 
@@ -51,8 +64,10 @@ def _is_risky_container(filename, mime_type):
 
 
 def _is_disguised_filename(filename):
+    """Three common filename-obfuscation tricks used by droppers."""
     name = str(filename or "").strip()
     normalized = name.lower()
+    # U+202E (RTL Override) flips display order — "doc<U+202E>exe.pdf" renders as "docfdp.exe".
     if "\u202e" in name:
         return True
     if DOUBLE_EXTENSION_PATTERN.search(normalized):
@@ -63,6 +78,11 @@ def _is_disguised_filename(filename):
 
 
 def _extract_pdf_links(content_base64):
+    """Best-effort PDF link extraction without a full PDF parser.
+
+    Two cheap signals: raw `https?://` matches in the decoded bytes, and explicit
+    `/URI ( ... )` action objects. We skip pypdf etc. to keep the request budget low.
+    """
     if not content_base64:
         return []
 
@@ -71,7 +91,7 @@ def _extract_pdf_links(content_base64):
     except Exception:
         return []
 
-    # Heuristic extraction: direct URL text + PDF URI objects.
+    # latin-1 + errors="ignore" preserves byte values 1:1 even through binary streams.
     text = raw.decode("latin-1", errors="ignore")
     urls = URL_PATTERN.findall(text)
     if "/URI" in text:
@@ -89,6 +109,11 @@ def _extract_pdf_links(content_base64):
 
 
 def scan_attachments(attachments):
+    """Classify and score every attachment in one pass.
+
+    Each strong signal short-circuits with `continue` so an executable that also
+    matches the disguised pattern doesn't double-count further per-file penalties.
+    """
     findings = []
     attachment_count = 0
     safe_pdf_count = 0
@@ -138,7 +163,7 @@ def scan_attachments(attachments):
             continue
 
         unknown_count += 1
-        # Keep generic attachment signal low to reduce false positives on benign docs.
+        # Generic attachments stay a low signal to avoid FPs on benign docs.
         risk_penalty += 4
         findings.append(f"Non-PDF attachment requires caution: {filename}")
 

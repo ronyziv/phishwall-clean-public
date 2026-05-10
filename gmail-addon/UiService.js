@@ -1,3 +1,11 @@
+/**
+ * Card builders + i18n strings.
+ *
+ * All UI text lives in TRANSLATIONS keyed by language. CardService TextParagraphs
+ * accept only a tiny HTML subset (<b>, <i>, <u>, <s>, <a>, <font>, <br>) so all
+ * spacing is built with <br> and emphasis with <font>/<b>.
+ */
+
 const TRANSLATIONS = {
   he: {
     welcomeTitle: "שלום,",
@@ -97,6 +105,8 @@ const TRANSLATIONS = {
   }
 };
 
+// Always returns a translation object — falls back to English so callers never
+// have to null-check.
 function getText(lang) {
   return TRANSLATIONS[lang] || TRANSLATIONS[LANG_EN];
 }
@@ -119,6 +129,8 @@ function buildHomePageCard(lang) {
   return card.build();
 }
 
+// Escape every dynamic value before it goes into a TextParagraph, otherwise a
+// malicious sender name / URL would render as raw HTML.
 function escapeHtml(value) {
   return String(value || "")
     .replace(/&/g, "&amp;")
@@ -169,9 +181,8 @@ function buildResultCard(result, lang) {
 
 function buildHeroSummarySection(result, text, risk) {
   const scoreNum = Number(result.maliciousScore || 0);
-  // CardService TextParagraph supports only a small HTML subset:
-  // <b>, <i>, <u>, <s>, <a>, <font>, <br>. Inline CSS and <div>/<span> are stripped,
-  // so spacing is built with <br> and emphasis with <font>/<b>.
+  // Inline CSS and <div>/<span> are stripped by CardService — see module header
+  // for the supported tag list. Score is colored via <font color> instead.
   const heroHtml =
     "<b>" + escapeHtml(risk.label) + "</b>" +
     "<br><br>" +
@@ -319,6 +330,8 @@ function buildScoreBreakdownHtml(scoreBreakdown, lang) {
     return text.noScoreBreakdown;
   }
 
+  // Per-language label map. Keys must match the ScoreBreakdown shape from the
+  // backend (see models.py). Anything not in `labels` is hidden from the UI.
   const labels = lang === LANG_HE
     ? {
         keywords: "ניסוח חשוד",
@@ -378,6 +391,8 @@ function buildScoreBreakdownHtml(scoreBreakdown, lang) {
   return orderedKeys
     .filter((key) => key in labels)
     .map((key) => {
+      // Penalties are subtracted from a 100-point trust pool, so we render them
+      // as negative numbers ("-12") to match how users read score breakdowns.
       const rawValue = Number(scoreBreakdown[key] || 0);
       const shownValue = rawValue > 0 ? "-" + rawValue : "0";
       return "<b>" + escapeHtml(labels[key]) + ":</b> " + escapeHtml(shownValue);
@@ -405,6 +420,9 @@ function localizeItems(items, lang) {
 }
 
 function localizeIndicatorText(item, lang) {
+  // Translate backend findings into the user's language. We match by substring
+  // because the backend appends per-finding context (filenames, URLs) that we
+  // want to keep but can't translate.
   const original = String(item || "");
   const normalized = original.toLowerCase();
   if (lang === LANG_EN) {
@@ -444,6 +462,8 @@ function localizeIndicatorText(item, lang) {
   };
 
   const map = lang === LANG_HE ? heMap : esMap;
+  // First-substring-match wins. Map keys are ordered most-specific first so
+  // "decoded qr from linked resource" beats the broader "decoded qr".
   const matchedKey = Object.keys(map).find((key) => normalized.indexOf(key) >= 0);
   return matchedKey ? map[matchedKey] : original;
 }
@@ -510,6 +530,9 @@ function buildLocalizedReasoning(result, lang) {
 }
 
 function buildLocalizedRecommendation(result, lang) {
+  // Prefer the backend-supplied recommendation (it can vary by familiarity
+  // calibration etc.). Fall back to a static per-verdict message only when the
+  // server didn't provide one (e.g. older builds, network errors).
   const text = getText(lang);
   const serverRec = String(result.recommendation || "").trim();
   if (serverRec) {
@@ -556,6 +579,7 @@ function buildLocalizedRecommendation(result, lang) {
   return result.recommendation || text.noRecommendation;
 }
 
+// Maps the backend verdict string to label/banner/color used by the hero block.
 function getRiskMeta(verdict, lang) {
   const text = getText(lang);
   const normalized = String(verdict || "").toLowerCase();
@@ -582,6 +606,7 @@ function getRiskMeta(verdict, lang) {
   };
 }
 
+// Best-effort detection from Gmail's userLocale. Defaults to English.
 function getUserLanguage(e) {
   try {
     if (e && e.commonEventObject && e.commonEventObject.userLocale) {
@@ -593,6 +618,8 @@ function getUserLanguage(e) {
   return LANG_EN;
 }
 
+// Per-user preference persisted via PropertiesService — survives reloads but
+// is scoped to this add-on for this user.
 function getStoredLanguage() {
   const lang = PropertiesService.getUserProperties().getProperty("PHISHWALL_LANG");
   return lang || DEFAULT_LANG;

@@ -1,7 +1,15 @@
+"""Sending-time anomaly detector.
+
+Off-hours/weekend timing alone produces a lot of false positives, so this scanner
+only contributes when the message text *also* looks BEC- or ATO-shaped. Time is
+explicitly a tie-breaker, never a primary signal.
+"""
+
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 
 
+# Finance/payment language that suggests a Business Email Compromise scenario.
 BEC_KEYWORDS = {
     "wire",
     "bank",
@@ -17,6 +25,7 @@ BEC_KEYWORDS = {
     "דחוף",
 }
 
+# Authentication/credential language that suggests Account Takeover.
 ACCOUNT_TAKEOVER_KEYWORDS = {
     "login",
     "password",
@@ -41,19 +50,19 @@ WEEKEND_DAYS = {5, 6}  # Saturday, Sunday
 
 
 def _parse_datetime(value):
+    # Accepts both ISO-8601 and RFC-style email Date headers. Naive datetimes are
+    # treated as UTC so off-hours math has a stable reference.
     text = str(value or "").strip()
     if not text:
         return None
 
     try:
-        # Supports ISO-8601 strings.
         dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
         return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
     except ValueError:
         pass
 
     try:
-        # Supports RFC-style email Date headers.
         dt = parsedate_to_datetime(text)
         return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
     except Exception:
@@ -71,6 +80,10 @@ def _is_ato_context(text):
 
 
 def scan_sending_time(date_value, context_text):
+    """Return a small penalty when the time looks unusual *and* the text is BEC/ATO-shaped.
+
+    Time alone never adds score — too noisy across timezones and bulk senders.
+    """
     dt = _parse_datetime(date_value)
     if dt is None:
         return {
@@ -89,9 +102,7 @@ def scan_sending_time(date_value, context_text):
     risk_penalty = 0
     findings = []
 
-    # Intentionally weak supporting signal:
-    # Time anomalies add score only when message context already looks suspicious
-    # (BEC or account-takeover patterns). Time by itself adds no score.
+    # Off-hours BEC/ATO is the stronger combination; weekend is a softer signal.
     if suspicious_context and hour in OFF_HOURS:
         risk_penalty += 2
         findings.append(

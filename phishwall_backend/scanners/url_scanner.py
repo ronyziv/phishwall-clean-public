@@ -1,3 +1,10 @@
+"""URL scanner: local heuristics + remote reputation (IPQS, GSB fallback).
+
+Local checks (TLD, shorteners, IP hosts, punycode, look-alike) run for every URL.
+Remote lookups are limited to REMOTE_LOOKUP_LIMIT URLs and run in parallel since
+they're network-bound and independent.
+"""
+
 import ipaddress
 import json
 import logging
@@ -10,16 +17,20 @@ from scanners.external_http_config import GSB_TIMEOUT, IPQS_URL_TIMEOUT, SCANNER
 from scanners.lookalike_domain_scanner import analyze_lookalike_domain
 
 
+# TLDs frequently abused by malware/phishing campaigns. Not exhaustive — kept small
+# to avoid flagging legitimate niche domains.
 SUSPICIOUS_TLDS = {
     "zip", "mov", "top", "gq", "tk", "work", "click", "country", "kim",
     "xyz", "site", "online", "icu", "buzz", "cam", "lol"
 }
 
+# URL shorteners hide the real destination, so they always get a penalty.
 SHORTENERS = {
     "bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly", "is.gd", "cutt.ly", "rebrand.ly",
     "tiny.cc", "rb.gy", "shorturl.at", "t.ly", "buff.ly", "lnkd.in"
 }
 
+# Cap remote lookups per email to keep wall time bounded on link-heavy mail.
 REMOTE_LOOKUP_LIMIT = 5
 SUSPICIOUS_URL_TERMS = ("download", "install", "update", "setup", "patch", "enable")
 SUSPICIOUS_DOWNLOAD_EXTENSIONS = (
@@ -54,6 +65,8 @@ def _is_ip_host(host):
 
 
 def _resolve_host(host):
+    # Cheap DNS sanity check. socket.gaierror -> domain doesn't resolve; any other
+    # error (network issue, etc.) is also treated as unresolved to stay deterministic.
     try:
         socket.getaddrinfo(host, 80, type=socket.SOCK_STREAM)
         return True
@@ -88,6 +101,8 @@ def _ipqs_lookup(url):
 
 
 def _gsb_lookup(url):
+    # Google Safe Browsing v4 threatMatches:find. Used as a fallback when IPQS isn't
+    # configured or returns nothing useful.
     api_key = os.environ.get("GOOGLE_SAFE_BROWSING_API_KEY", "").strip()
     if not api_key:
         return None, "disabled"
@@ -119,6 +134,7 @@ def _gsb_lookup(url):
     try:
         with request.urlopen(req, timeout=GSB_TIMEOUT) as resp:
             data = _read_json_response(resp)
+            # GSB returns {} when the URL is clean — treat as "no matches".
             if data is None:
                 return {"matches": []}, None
             if isinstance(data, dict):
@@ -131,6 +147,8 @@ def _gsb_lookup(url):
 
 
 def _apply_remote_reputation(url, findings):
+    # Returns (penalty, ipqs_inc, gsb_inc). IPQS first; GSB only consulted if IPQS
+    # didn't return a usable response.
     ipqs, ipqs_issue = _ipqs_lookup(url)
     if ipqs:
         risk_score = int(ipqs.get("risk_score", 0) or 0)
@@ -153,6 +171,7 @@ def _apply_remote_reputation(url, findings):
             return 30, 0, 1
         return 0, 0, 0
 
+    # Both providers failed/disabled — surface info findings so the add-on shows it.
     if ipqs_issue == "timeout":
         findings.append("IPQS reputation lookup timed out; attempted fallback.")
     elif ipqs_issue in {"error", "empty"}:
@@ -169,6 +188,7 @@ def _apply_remote_reputation(url, findings):
 
 
 def _safe_remote_row(url):
+    # Wrapper that the parallel `ex.map` call uses — must never raise.
     findings_local = []
     try:
         penalty, ipqs_inc, gsb_inc = _apply_remote_reputation(url, findings_local)
@@ -179,6 +199,9 @@ def _safe_remote_row(url):
 
 
 def scan_urls(urls):
+    """Score every URL against local heuristics, then run remote reputation on the
+    first REMOTE_LOOKUP_LIMIT in parallel.
+    """
     findings = []
     risk_penalty = 0
     unresolved_hosts = 0
@@ -190,7 +213,8 @@ def scan_urls(urls):
         urls = []
 
     scanned_raw = [str(raw_url).strip() for raw_url in urls if str(raw_url).strip()]
-    # Deduplicate exact URL strings while preserving order to prevent repeated inflation.
+    # Dedupe by exact string while preserving order, otherwise repeated URLs would
+    # multiply every penalty below.
     scanned = list(dict.fromkeys(scanned_raw))
 
     for url in scanned:
@@ -204,6 +228,7 @@ def scan_urls(urls):
             risk_penalty += 20
             findings.append(f"URL shortener detected: {host}")
 
+        # `@` in URL is the classic credential-injection trick (https://login@evil.com).
         if "@" in url:
             risk_penalty += 20
             findings.append(f"URL contains '@': {url}")
@@ -218,7 +243,7 @@ def scan_urls(urls):
             findings.append(f"URL points to potentially dangerous downloadable file: {url}")
 
         if len(url) > 150:
-            # Long URL alone is a weak signal; cap its total effect.
+            # Long URLs are weak on their own; cap to first 2 hits to avoid pile-on.
             if long_url_hits < 2:
                 risk_penalty += 2
             long_url_hits += 1
@@ -247,7 +272,7 @@ def scan_urls(urls):
             risk_penalty += 15
             findings.append(f"Domain does not resolve in DNS: {host}")
 
-    # Remote reputation: IPQS with GSB fallback. Independent requests run concurrently.
+    # Remote reputation runs concurrently; calls are independent and network-bound.
     lookup_batch = scanned[:REMOTE_LOOKUP_LIMIT]
     if lookup_batch:
         workers = max(2, min(SCANNER_MAX_WORKERS, len(lookup_batch)))

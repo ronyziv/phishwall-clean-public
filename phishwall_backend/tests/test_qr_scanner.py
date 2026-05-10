@@ -1,3 +1,9 @@
+"""QR scanner tests.
+
+QR_PNG_BASE64 is a real QR code that decodes to https://phish.example/login —
+that's why several assertions check for that exact string in the output.
+"""
+
 import unittest
 
 from scanners.qr_scanner import scan_qr_attachments, scan_qr_linked_resources
@@ -19,6 +25,8 @@ class QrScannerTests(unittest.TestCase):
         self.assertIn("https://phish.example/login", " ".join(result["decodedPayloads"]))
 
     def test_skips_non_image_attachment(self):
+        # Same QR bytes, but as text/plain — the filename/mime gate should skip it
+        # entirely and never reach the decoder.
         result = scan_qr_attachments(
             [{"filename": "notes.txt", "mimeType": "text/plain", "contentBase64": QR_PNG_BASE64}]
         )
@@ -34,6 +42,8 @@ class QrScannerTests(unittest.TestCase):
         self.assertIn("qr-related linked resource detected", findings_text)
 
     def test_qr_link_decoding_from_fetched_resource(self):
+        # Inject a fetcher that returns our QR PNG bytes, so the test stays offline
+        # but still exercises the full fetch -> decode -> finding path.
         result = scan_qr_linked_resources(
             ["https://example.com/qr/challenge"],
             fetcher=lambda _: __import__("base64").b64decode(QR_PNG_BASE64),

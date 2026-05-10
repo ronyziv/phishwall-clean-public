@@ -1,3 +1,5 @@
+"""Verdict engine tests focused on the mailbox-familiarity moderation path."""
+
 import unittest
 
 from services.verdict_engine import build_verdict
@@ -5,6 +7,8 @@ from services.verdict_engine import build_verdict
 
 class VerdictEngineTrustTests(unittest.TestCase):
     def _soft_bec_spoof_fixture(self, malicious_score: int):
+        # Borderline scenario: BEC detected + display-name spoof, no hard blockers.
+        # Whether this lands as Suspicious vs Dangerous should depend on prior history.
         return dict(
             malicious_score=malicious_score,
             keyword_penalty=0,
@@ -35,6 +39,8 @@ class VerdictEngineTrustTests(unittest.TestCase):
         self.assertFalse(vd["familiarSenderCalibration"])
 
     def test_familiarity_does_not_overrule_executable(self):
+        # Hard blockers (executable, disguised name, VT-flagged sender) must always
+        # land Dangerous regardless of how much history the mailbox has.
         vd = build_verdict(
             sender_prior_thread_count=20,
             malicious_score=65,
@@ -49,6 +55,8 @@ class VerdictEngineTrustTests(unittest.TestCase):
         self.assertEqual(vd["verdict"], "Dangerous / Do Not Open")
 
     def test_familiarity_disabled_when_url_reputation_flags(self):
+        # Same as above, but the blocker is a remote URL reputation hit instead of
+        # an attachment — familiarity calibration must still be off.
         vd = build_verdict(
             sender_prior_thread_count=20,
             malicious_score=52,

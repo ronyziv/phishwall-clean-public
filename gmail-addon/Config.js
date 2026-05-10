@@ -1,15 +1,22 @@
-// Set to your public backend: https://<host>/scan (see README.md and docs/getting-started.md).
+// ---------------------------------------------------------------------------
+// PhishWall add-on configuration.
+// API_URL must point at your deployed FastAPI /scan endpoint. The placeholder
+// below is intentional — see README.md / docs/getting-started.md.
+// ---------------------------------------------------------------------------
+
 const API_URL = "https://YOUR_PUBLIC_HOST_HERE/scan";
 
 const APP_NAME = "PhishWall";
 const APP_SUBTITLE = "Email safety scan";
 const APP_LOGO_URL = "https://drive.google.com/uc?export=view&id=1B0pLLT7MDD8mK_n7crhnHrV3pLD0JuKz";
 
+// Three-way language toggle. Stored per-user via PropertiesService (see UiService).
 const LANG_HE = "he";
 const LANG_EN = "en";
 const LANG_ES = "es";
 const DEFAULT_LANG = LANG_EN;
 
+// Random rotation of safety tips shown on the home card and after each scan.
 const TIPS = {
   en: [
     "Do not open unexpected attachments, especially .zip, .exe, .js, or Office files asking to enable macros.",

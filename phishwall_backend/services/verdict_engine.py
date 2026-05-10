@@ -1,7 +1,16 @@
+"""Verdict engine: turns pipeline aggregates into Safe/Suspicious/Dangerous.
+
+Decisions blend the malicious score with categorical "strong indicator" flags.
+Hard blockers (executable, disguised attachment, VT-flagged sender) bypass score
+thresholds entirely. Mailbox familiarity (prior threads from this sender) only
+*raises* the bar for Dangerous on borderline cases — it never bypasses any of the
+hard blockers or reputation/QR checks.
+"""
+
 from typing import Any, Dict, List
 
-# Prior threads from the mailbox (add-on supplied). When eligible, makes reaching **Dangerous**
-# numerically harder (higher score bars), never to bypass hard blockers or reputation/QR signals.
+# Minimum prior-thread count from the same sender (180d window, supplied by the
+# add-on) before familiarity calibration can apply.
 _FAMILIAR_PRIOR_THREAD_MIN = 5
 
 
@@ -22,6 +31,7 @@ def _mailbox_familiarity_moderates(
     ipqs_url_flagged: int,
     gsb_url_flagged: int,
 ) -> bool:
+    # All of these gate familiarity off entirely — strong evidence beats history.
     if prior_threads < _FAMILIAR_PRIOR_THREAD_MIN:
         return False
     if hard_blocker or has_sender_reputation_hit:
@@ -46,6 +56,8 @@ def build_verdict(
     risk_indicators: List[str],
     sender_prior_thread_count: int = 0,
 ) -> Dict[str, Any]:
+    """Return verdict + color/icon + human reasoning + indicator tags."""
+    # Single string we can substring-search instead of looping over the list repeatedly.
     indicators_text = " | ".join(risk_indicators)
 
     has_executable = attachment_summary.get("executableCount", 0) > 0
@@ -84,6 +96,7 @@ def build_verdict(
     has_qr_url_payload = _contains_any(indicators_text, ["decoded qr", "contains url target"])
     has_bec_behavior = priority_threat_summary.get("becDetected", False)
 
+    # Tag list shown in the "main reasons" panel.
     strong_indicators: List[str] = []
     if has_executable:
         strong_indicators.append("executable attachment")
@@ -105,6 +118,7 @@ def build_verdict(
         strong_indicators.append("BEC-style impersonation pattern")
 
     strong_count = len(strong_indicators)
+    # Hard blockers force Dangerous regardless of score.
     hard_blocker = has_executable or has_disguised_attachment or sender_summary.get("vtFlagged", 0) > 0
 
     prior_threads = max(0, int(sender_prior_thread_count or 0))
@@ -125,6 +139,8 @@ def build_verdict(
     color = "#2E7D32"
     icon = "🟢"
 
+    # Two threshold sets: familiar-sender history pushes the Dangerous bar higher.
+    # Hard blockers and QR/BEC-specific paths still dominate either way.
     if familiar_mod:
         dangerous_condition = (
             hard_blocker
@@ -161,6 +177,7 @@ def build_verdict(
         color = "#F57C00"
         icon = "🟠"
 
+    # Reasoning + recommendation per verdict band, shown verbatim in the add-on.
     if verdict == "Dangerous / Do Not Open":
         if strong_indicators:
             reasoning = (
@@ -181,6 +198,7 @@ def build_verdict(
         else:
             reasoning = "This email has multiple warning signals and needs manual verification."
         if familiar_mod:
+            # Softer wording when prior history suggests this sender is known.
             recommendation = (
                 "Only open links or attachments if you recognize this sender and expected this "
                 "type of file. If anything is unexpected, verify through a separate trusted channel."
@@ -200,5 +218,6 @@ def build_verdict(
         "reasoning": reasoning,
         "recommendation": recommendation,
         "strongIndicators": strong_indicators,
+        # Surfaced separately so the UI can show a "history-aware" badge.
         "familiarSenderCalibration": bool(familiar_mod and verdict == "Suspicious"),
     }

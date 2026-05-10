@@ -1,3 +1,10 @@
+"""Wall-clock tests that verify the pipeline really runs scanners in parallel.
+
+These rely on `time.sleep` rather than mocked futures so a regression that
+serializes the pipeline (e.g. dropping the ThreadPoolExecutor) is actually
+caught by CI instead of silently passing.
+"""
+
 import time
 import unittest
 from unittest.mock import patch
@@ -9,6 +16,7 @@ from services.scanner_pipeline import ScannerPipeline
 
 
 class _SleepScanner:
+    # Test double whose `run` blocks for `delay_s` so we can measure parallelism.
     def __init__(self, name: str, delay_s: float, breakdown_key: str, value: int = 3) -> None:
         self.name = name
         self._delay_s = delay_s
@@ -27,6 +35,8 @@ class _SleepScanner:
 
 
 class _RaisingScanner:
+    # Test double that always raises — used to verify one scanner failing doesn't
+    # poison the rest of the phase.
     name = "keywords"
 
     def applies(self, context: ScanContext, state: dict) -> bool:
@@ -38,7 +48,8 @@ class _RaisingScanner:
 
 class ParallelExecutionTests(unittest.TestCase):
     def test_phase1_two_scanners_runs_near_parallel_wall_time(self) -> None:
-        # Large enough sleeps so wall time distinguishes parallel (~1×sleep) vs serial (~2×sleep) on CI.
+        # Sleep large enough that parallel (~1×delay) and serial (~2×delay) are
+        # distinguishable even on noisy CI.
         delay = 0.22
         pipe = ScannerPipeline(
             scanners=[
@@ -60,11 +71,14 @@ class ParallelExecutionTests(unittest.TestCase):
         self.assertGreaterEqual(out["breakdown"]["keywords"], 2)
         self.assertGreaterEqual(out["breakdown"]["language"], 2)
 
+        # Lower bound: must take at least one delay (scheduling can dip slightly under).
         self.assertGreaterEqual(elapsed, delay * 0.85)
-        # If these two ran strictly one after another, wall time would be ~2× delay.
+        # Upper bound: serial would be ~2×delay; we want closer to 1×delay.
         self.assertLess(elapsed, delay * 1.65)
 
     def test_phase1_parallel_one_scanner_raises_other_contributes(self) -> None:
+        # When one scanner raises, its breakdown stays at 0 and its sibling's
+        # output still merges into the aggregate.
         pipe = ScannerPipeline(
             scanners=[
                 _RaisingScanner(),
@@ -76,12 +90,14 @@ class ParallelExecutionTests(unittest.TestCase):
 
         self.assertEqual(out["breakdown"]["keywords"], 0)
         self.assertGreaterEqual(out["breakdown"]["language"], 4)
+        # Pipeline must surface a friendly info finding for the failed stage.
         self.assertTrue(
             any("internal error" in (m or "").lower() for m in out["infoFindings"]),
             msg=out["infoFindings"],
         )
 
     def test_url_remote_reputation_batches_run_in_parallel(self) -> None:
+        # Same idea, scoped to scan_urls' internal ThreadPoolExecutor.
         urls = [f"http://example{i}.test/path" for i in range(3)]
         delay = 0.12
 
@@ -95,6 +111,7 @@ class ParallelExecutionTests(unittest.TestCase):
             scan_urls(urls)
             elapsed = time.perf_counter() - t0
 
+        # Three sequential calls would be ~3×delay; we want closer to 1×delay.
         self.assertLess(elapsed, delay * 2.5)
         self.assertGreaterEqual(elapsed, delay * 0.85)
 

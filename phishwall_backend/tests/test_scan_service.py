@@ -1,3 +1,5 @@
+"""End-to-end tests for analyze_email and a few key invariants of the response."""
+
 import unittest
 
 from services.scan_service import analyze_email, normalize_urls
@@ -6,9 +8,11 @@ from scanners.lookalike_domain_scanner import BRANDS
 
 class ScanServiceTests(unittest.TestCase):
     def test_impersonation_target_catalog_size(self):
+        # Sanity check: catch accidental truncation of the brand catalog in CI.
         self.assertGreaterEqual(len(BRANDS), 150)
 
     def test_normalize_urls_falls_back_to_body_extraction(self):
+        # When the add-on doesn't pre-extract URLs, we should still scrape them from the body.
         body = "Please review https://example.com/path and http://a.co now."
         urls = normalize_urls([], body)
         self.assertEqual(
@@ -47,6 +51,8 @@ class ScanServiceTests(unittest.TestCase):
             self.assertIn(key, result)
 
     def test_score_breakdown_consistency(self):
+        # maliciousScore + score must always sum to 100 and match totalPenalty —
+        # this invariant is what the add-on UI relies on for the score gauge.
         payload = {
             "subject": "Report",
             "from": "alerts@example.com",
@@ -75,6 +81,8 @@ class ScanServiceTests(unittest.TestCase):
         self.assertGreater(result["scoreBreakdown"]["sender"], 0)
 
     def test_detects_disguised_attachment_filename(self):
+        # Double-extension (.pdf.exe) must trigger BOTH the disguised-name finding
+        # and the executable finding, and force a Dangerous verdict regardless of score.
         payload = {
             "subject": "Invoice attached",
             "from": "billing@example.com",
@@ -127,7 +135,11 @@ class ScanServiceTests(unittest.TestCase):
         self.assertIn("qr-related linked resource", findings_text)
 
     def test_bec_not_fully_detected_when_only_lexical_signals_missing(self):
-        """Casual message + Gmail + display-brand mismatch must not satisfy multi-signal BEC."""
+        """Casual message + Gmail + display-brand mismatch must not satisfy multi-signal BEC.
+
+        Regression guard: an earlier version flagged any "Microsoft Alerts"-style
+        display-name spoof as full BEC even without finance/pressure language.
+        """
         payload = {
             "subject": "Look at this",
             "from": "Microsoft Alerts <classmate@gmail.com>",
